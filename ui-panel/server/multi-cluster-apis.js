@@ -598,12 +598,12 @@ class MultiClusterAPIs {
   // 导入现有集群
   async handleImportCluster(req, res) {
     try {
-      const { eksClusterName, awsRegion, s3BucketName } = req.body;
+      const { eksClusterName, awsRegion } = req.body;
       
-      if (!eksClusterName || !awsRegion || !s3BucketName) {
+      if (!eksClusterName || !awsRegion) {
         return res.status(400).json({
           success: false,
-          error: 'eksClusterName, awsRegion, and s3BucketName are required'
+          error: 'eksClusterName and awsRegion are required'
         });
       }
 
@@ -626,7 +626,6 @@ class MultiClusterAPIs {
         CLUSTER_TYPE: 'imported',
         EKS_CLUSTER_NAME: eksClusterName,
         AWS_REGION: awsRegion,
-        S3_BUCKET_NAME: s3BucketName,
         SKIP_CLUSTER_CREATION: 'true',
         SKIP_CLOUDFORMATION: 'true'
       };

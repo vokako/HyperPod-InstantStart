@@ -58,6 +58,30 @@ function broadcast(data) {
   });
 }
 
+// 优化错误消息的函数
+function optimizeErrorMessage(errorMessage) {
+  if (!errorMessage) return 'Unknown error';
+  
+  // 如果是获取hyperpodpytorchjob但资源类型不存在，这是正常情况
+  if (errorMessage.includes(`doesn't have a resource type "hyperpodpytorchjob"`)) {
+    return 'No HyperPod training jobs found (HyperPod operator may not be installed)';
+  }
+  // 如果是获取rayjob但资源类型不存在
+  if (errorMessage.includes(`doesn't have a resource type "rayjob"`)) {
+    return 'No RayJobs found (Ray operator may not be installed)';
+  }
+  // 如果是资源不存在，使用更友好的消息
+  if (errorMessage.includes('not found') || errorMessage.includes('NotFound')) {
+    return 'Resource not found - this may be normal if no resources have been created yet';
+  }
+  // 如果是连接问题
+  if (errorMessage.includes('connection refused') || errorMessage.includes('unable to connect')) {
+    return 'Unable to connect to Kubernetes cluster. Please check if the cluster is accessible.';
+  }
+  
+  return errorMessage;
+}
+
 // 执行kubectl命令的辅助函数 - 简化版错误优化
 function executeKubectl(command, timeout = 30000) { // 默认30秒超时
   return new Promise((resolve, reject) => {
@@ -1797,7 +1821,9 @@ app.get('/api/training-jobs', async (req, res) => {
         }
       }));
     } catch (error) {
-      console.log('No HyperPod PytorchJobs found or error:', error.message);
+      const optimizedMessage = optimizeErrorMessage(error.message);
+      console.log('No HyperPod PytorchJobs found or error:', optimizedMessage);
+      // 对于导入的集群，这是正常的 - 不记录为错误
     }
 
     // 获取RayJob
@@ -1817,7 +1843,9 @@ app.get('/api/training-jobs', async (req, res) => {
         }
       }));
     } catch (error) {
-      console.log('No RayJobs found or error:', error.message);
+      const optimizedMessage = optimizeErrorMessage(error.message);
+      console.log('No RayJobs found or error:', optimizedMessage);
+      // 对于导入的集群，这是正常的 - 不记录为错误
     }
 
     // 合并两种类型的作业
