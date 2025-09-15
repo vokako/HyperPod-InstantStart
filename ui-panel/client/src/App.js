@@ -109,6 +109,30 @@ function App() {
               message.error(data.message);
             }
             break;
+
+          case 'hyperpod_creation_started':
+            if (data.status === 'success' || data.status === 'info') {
+              message.success(data.message);
+              // 🚀 触发操作刷新
+              operationRefreshManager.triggerOperationRefresh('hyperpod-create', data);
+            } else {
+              message.error(data.message);
+            }
+            break;
+
+          case 'hyperpod_creation_completed':
+            if (data.status === 'success') {
+              message.success(data.message);
+              // 🚀 触发操作刷新
+              operationRefreshManager.triggerOperationRefresh('hyperpod-create', data);
+            }
+            break;
+
+          case 'hyperpod_creation_failed':
+            message.error(data.message);
+            // 🚀 触发操作刷新
+            operationRefreshManager.triggerOperationRefresh('hyperpod-create', data);
+            break;
             
           case 'undeployment':
             if (data.status === 'success') {

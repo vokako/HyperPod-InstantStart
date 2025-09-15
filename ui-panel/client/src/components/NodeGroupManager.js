@@ -1,16 +1,114 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, message, Tag, Space, Modal, InputNumber, Form } from 'antd';
-import { ReloadOutlined, EditOutlined, ToolOutlined } from '@ant-design/icons';
+import { Card, Table, Button, message, Tag, Space, Modal, InputNumber, Form, Select, Input, Typography } from 'antd';
+import { ReloadOutlined, EditOutlined, ToolOutlined, PlusOutlined } from '@ant-design/icons';
 import globalRefreshManager from '../hooks/useGlobalRefresh';
 import operationRefreshManager from '../hooks/useOperationRefresh';
 
+const { Text } = Typography;
+
 const NodeGroupManager = () => {
   const [loading, setLoading] = useState(false);
+  const [scaleLoading, setScaleLoading] = useState(false); // 新增scale loading状态
   const [eksNodeGroups, setEksNodeGroups] = useState([]);
   const [hyperPodGroups, setHyperPodGroups] = useState([]);
+  const [hyperPodCreationStatus, setHyperPodCreationStatus] = useState(null);
+  const [clusterInfo, setClusterInfo] = useState({ eksClusterName: '', region: '' });
+  const [availabilityZones, setAvailabilityZones] = useState([]);
   const [scaleModalVisible, setScaleModalVisible] = useState(false);
+  const [createHyperPodModalVisible, setCreateHyperPodModalVisible] = useState(false);
   const [scaleTarget, setScaleTarget] = useState(null);
   const [form] = Form.useForm();
+  const [hyperPodForm] = Form.useForm();
+
+  const fetchClusterInfo = async () => {
+    try {
+      const response = await fetch('/api/cluster/info');
+      const data = await response.json();
+      if (response.ok) {
+        setClusterInfo({
+          eksClusterName: data.eksClusterName || '',
+          region: data.region || ''
+        });
+        
+        // 获取真实的可用区列表
+        if (data.region) {
+          const azResponse = await fetch(`/api/cluster/availability-zones?region=${data.region}`);
+          const azData = await azResponse.json();
+          if (azResponse.ok) {
+            setAvailabilityZones(azData.zones || []);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching cluster info:', error);
+    }
+  };
+
+  const checkHyperPodCreationStatus = async () => {
+    try {
+      console.log('🔍 Checking HyperPod creation status...');
+      
+      // 先获取当前活跃集群
+      const clusterInfoResponse = await fetch('/api/cluster/info');
+      const clusterInfo = await clusterInfoResponse.json();
+      const activeCluster = clusterInfo.activeCluster;
+      
+      console.log('📋 Active cluster:', activeCluster);
+      
+      if (!activeCluster) {
+        console.log('❌ No active cluster found');
+        setHyperPodCreationStatus(null);
+        return;
+      }
+      
+      const response = await fetch('/api/cluster/creating-hyperpod-clusters');
+      const result = await response.json();
+      
+      console.log('📊 Creating clusters response:', result);
+      
+      if (response.ok && result.data) {
+        const status = result.data[activeCluster];
+        
+        console.log('🎯 Status for active cluster:', status);
+        
+        // 如果状态被清理了（null），清除本地状态
+        if (!status) {
+          console.log('✅ No creation status, clearing local state');
+          setHyperPodCreationStatus(null);
+        } else {
+          console.log('🚀 Setting creation status:', status);
+          setHyperPodCreationStatus(status);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking HyperPod creation status:', error);
+    }
+  };
+
+  const handleCreateHyperPod = async () => {
+    try {
+      const values = await hyperPodForm.validateFields();
+      
+      // 立即关闭Modal
+      setCreateHyperPodModalVisible(false);
+      hyperPodForm.resetFields();
+      
+      const response = await fetch('/api/cluster/create-hyperpod', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userConfig: values })
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        message.error(`Failed to create HyperPod cluster: ${result.error}`);
+      }
+      // 成功情况下不做任何操作，等待WebSocket消息处理
+    } catch (error) {
+      message.error(`Error creating HyperPod cluster: ${error.message}`);
+    }
+  };
 
   const fetchNodeGroups = async () => {
     setLoading(true);
@@ -33,14 +131,22 @@ const NodeGroupManager = () => {
 
   useEffect(() => {
     fetchNodeGroups();
+    fetchClusterInfo();
+    checkHyperPodCreationStatus();
 
     // 注册到全局刷新系统
-    globalRefreshManager.subscribe('nodegroup-manager', fetchNodeGroups, {
+    globalRefreshManager.subscribe('nodegroup-manager', async () => {
+      await fetchNodeGroups();
+      await checkHyperPodCreationStatus();
+    }, {
       priority: 7
     });
 
     // 注册到操作刷新系统
-    operationRefreshManager.subscribe('nodegroup-manager', fetchNodeGroups);
+    operationRefreshManager.subscribe('nodegroup-manager', async () => {
+      await fetchNodeGroups();
+      await checkHyperPodCreationStatus();
+    });
 
     return () => {
       globalRefreshManager.unsubscribe('nodegroup-manager');
@@ -89,7 +195,10 @@ const NodeGroupManager = () => {
   };
 
   const handleScaleSubmit = async () => {
+    if (scaleLoading) return; // 防止重复点击
+    
     try {
+      setScaleLoading(true);
       const values = await form.validateFields();
       
       const endpoint = scaleTarget.type === 'eks' 
@@ -106,13 +215,16 @@ const NodeGroupManager = () => {
         message.success(`${scaleTarget.type === 'eks' ? 'Node group' : 'Instance group'} scaling updated successfully`);
         setScaleModalVisible(false);
         form.resetFields();
-        fetchNodeGroups();
+        await fetchNodeGroups();
       } else {
         const error = await response.json();
-        message.error(`Failed to update scaling: ${error.error}`);
+        message.error(`Failed to update scaling: ${error.error || error.message || 'Unknown error'}`);
       }
     } catch (error) {
-      message.error(`Error updating scaling: ${error.message}`);
+      console.error('Error updating scaling:', error);
+      message.error(`Error updating scaling: ${error.message || 'Unknown error'}`);
+    } finally {
+      setScaleLoading(false);
     }
   };
 
@@ -126,13 +238,14 @@ const NodeGroupManager = () => {
 
       if (response.ok) {
         message.success('HyperPod cluster software update initiated successfully');
-        fetchNodeGroups();
+        await fetchNodeGroups(); // 确保fetchNodeGroups完成
       } else {
         const error = await response.json();
-        message.error(`Failed to update cluster software: ${error.error}`);
+        message.error(`Failed to update cluster software: ${error.error || error.message || 'Unknown error'}`);
       }
     } catch (error) {
-      message.error(`Error updating cluster software: ${error.message}`);
+      console.error('Error in handleUpdateSoftware:', error);
+      message.error(`Error updating cluster software: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -157,15 +270,37 @@ const NodeGroupManager = () => {
       >
         Scale
       </Button>
-      <Button 
-        size="small" 
-        icon={<ToolOutlined />}
-        onClick={() => handleUpdateSoftware(record)}
-      >
-        Update Cluster Software
-      </Button>
     </Space>
   );
+
+  // 渲染HyperPod集群级操作按钮
+  const renderHyperPodClusterActions = () => {
+    if (hyperPodGroups.length === 0) return null;
+    
+    // 获取第一个Instance Group的集群信息（所有Instance Group属于同一个集群）
+    const clusterInfo = hyperPodGroups[0];
+    
+    return (
+      <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fafafa', border: '1px solid #d9d9d9', borderRadius: '6px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <Text strong>HyperPod Cluster: {clusterInfo.clusterName}</Text>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+              Cluster-level operations affect all instance groups
+            </div>
+          </div>
+          <Space>
+            <Button 
+              icon={<ToolOutlined />}
+              onClick={() => handleUpdateSoftware(clusterInfo)}
+            >
+              Update Cluster Software
+            </Button>
+          </Space>
+        </div>
+      </div>
+    );
+  };
 
   const eksColumns = [
     { title: 'Node Group Name', dataIndex: 'name', key: 'name' },
@@ -177,7 +312,6 @@ const NodeGroupManager = () => {
   ];
 
   const hyperPodColumns = [
-    { title: 'HyperPod Cluster Name', dataIndex: 'clusterName', key: 'clusterName' },
     { title: 'Instance Group Name', dataIndex: 'name', key: 'name' },
     { title: 'Status', dataIndex: 'status', key: 'status', render: renderStatus },
     { title: 'Instance Type', dataIndex: 'instanceType', key: 'instanceType' },
@@ -190,7 +324,10 @@ const NodeGroupManager = () => {
       <div style={{ marginBottom: '16px', textAlign: 'right' }}>
         <Button 
           icon={<ReloadOutlined />} 
-          onClick={fetchNodeGroups}
+          onClick={() => {
+            fetchNodeGroups();
+            checkHyperPodCreationStatus();
+          }}
           loading={loading}
           size="small"
         >
@@ -202,7 +339,53 @@ const NodeGroupManager = () => {
         title="HyperPod Instance Groups"
         style={{ marginBottom: '16px' }}
         size="small"
+        extra={
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />} 
+            size="small"
+            onClick={() => {
+              setCreateHyperPodModalVisible(true);
+              fetchClusterInfo(); // 确保获取最新信息
+            }}
+            disabled={
+              !!hyperPodCreationStatus || // 创建中时禁用
+              hyperPodGroups.length > 0    // 已存在HyperPod时禁用
+            }
+            title={
+              hyperPodCreationStatus 
+                ? "HyperPod creation in progress" 
+                : hyperPodGroups.length > 0 
+                  ? "HyperPod cluster already exists in this EKS cluster"
+                  : "Create HyperPod cluster"
+            }
+          >
+            Create HyperPod
+          </Button>
+        }
       >
+        {hyperPodCreationStatus && (
+          <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '6px' }}>
+            <Space>
+              <Tag color="processing">Creating</Tag>
+              <span>HyperPod Cluster: {hyperPodCreationStatus.stackName}</span>
+              <span>Phase: {hyperPodCreationStatus.phase}</span>
+              <span>Status: {hyperPodCreationStatus.cfStatus || hyperPodCreationStatus.status}</span>
+            </Space>
+          </div>
+        )}
+        
+        {/* HyperPod集群级操作 */}
+        {renderHyperPodClusterActions()}
+        
+        {hyperPodGroups.length === 0 && !hyperPodCreationStatus && (
+          <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fff7e6', border: '1px solid #ffd591', borderRadius: '6px' }}>
+            <Space>
+              <Tag color="orange">Not Found</Tag>
+              <span>No HyperPod cluster exists in this EKS cluster</span>
+            </Space>
+          </div>
+        )}
         <Table 
           columns={hyperPodColumns}
           dataSource={hyperPodGroups}
@@ -232,10 +415,13 @@ const NodeGroupManager = () => {
         open={scaleModalVisible}
         onOk={handleScaleSubmit}
         onCancel={() => {
+          if (scaleLoading) return; // 防止loading时关闭
           setScaleModalVisible(false);
           form.resetFields();
         }}
         okText="Update"
+        confirmLoading={scaleLoading}
+        cancelButtonProps={{ disabled: scaleLoading }}
       >
         <Form form={form} layout="vertical">
           {scaleTarget?.type === 'eks' ? (
@@ -271,6 +457,120 @@ const NodeGroupManager = () => {
               <InputNumber min={0} max={100} style={{ width: '100%' }} />
             </Form.Item>
           )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Create HyperPod Cluster"
+        open={createHyperPodModalVisible}
+        onOk={handleCreateHyperPod}
+        onCancel={() => {
+          setCreateHyperPodModalVisible(false);
+          hyperPodForm.resetFields();
+        }}
+        okText="Create"
+        width={700}
+      >
+        <Form form={hyperPodForm} layout="vertical">
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <Form.Item 
+              label="EKS Cluster Name"
+              style={{ flex: 1 }}
+            >
+              <Input value={clusterInfo.eksClusterName} disabled />
+            </Form.Item>
+            
+            <Form.Item 
+              label="Region"
+              style={{ flex: 1 }}
+            >
+              <Input value={clusterInfo.region} disabled />
+            </Form.Item>
+          </div>
+
+          <Form.Item 
+            name="clusterTag" 
+            label="Cluster Tag"
+            rules={[{ required: true, message: 'Please input cluster tag' }]}
+            extra="Used for resource naming (stack, cluster, node groups)"
+          >
+            <Input placeholder="my-hyperpod" />
+          </Form.Item>
+          
+          <Form.Item 
+            name="AcceleratedInstanceType" 
+            label="Instance Type"
+            initialValue="ml.g5.8xlarge"
+            rules={[{ required: true, message: 'Please select or input instance type' }]}
+          >
+            <Select 
+              placeholder="Select or type instance type"
+              showSearch
+              allowClear
+              mode="combobox"
+            >
+              <Select.Option value="ml.g5.8xlarge">ml.g5.8xlarge</Select.Option>
+              <Select.Option value="ml.g5.12xlarge">ml.g5.12xlarge</Select.Option>
+              <Select.Option value="ml.g5.24xlarge">ml.g5.24xlarge</Select.Option>
+              <Select.Option value="ml.g5.48xlarge">ml.g5.48xlarge</Select.Option>
+              <Select.Option value="ml.g6.8xlarge">ml.g6.8xlarge</Select.Option>
+              <Select.Option value="ml.g6.12xlarge">ml.g6.12xlarge</Select.Option>
+              <Select.Option value="ml.g6.24xlarge">ml.g6.24xlarge</Select.Option>
+              <Select.Option value="ml.g6.48xlarge">ml.g6.48xlarge</Select.Option>
+              <Select.Option value="ml.g6e.8xlarge">ml.g6e.8xlarge</Select.Option>
+              <Select.Option value="ml.g6e.12xlarge">ml.g6e.12xlarge</Select.Option>
+              <Select.Option value="ml.g6e.24xlarge">ml.g6e.24xlarge</Select.Option>
+              <Select.Option value="ml.g6e.48xlarge">ml.g6e.48xlarge</Select.Option>
+              <Select.Option value="ml.p4d.24xlarge">ml.p4d.24xlarge</Select.Option>
+              <Select.Option value="ml.p5.48xlarge">ml.p5.48xlarge</Select.Option>
+              <Select.Option value="ml.p5en.48xlarge">ml.p5en.48xlarge</Select.Option>
+              <Select.Option value="ml.p6-b200.48xlarge">ml.p6-b200.48xlarge</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <Form.Item 
+              name="AcceleratedInstanceCount" 
+              label="Instance Count"
+              initialValue={1}
+              rules={[{ required: true, message: 'Please input instance count' }]}
+              style={{ flex: 1 }}
+            >
+              <InputNumber min={1} max={100} style={{ width: '100%' }} />
+            </Form.Item>
+            
+            <Form.Item 
+              name="AcceleratedEBSVolumeSize" 
+              label="EBS Volume Size (GB)"
+              initialValue={500}
+              rules={[{ required: true, message: 'Please input EBS volume size' }]}
+              style={{ flex: 1 }}
+            >
+              <InputNumber min={100} max={10000} style={{ width: '100%' }} />
+            </Form.Item>
+          </div>
+
+          <Form.Item 
+            name="availabilityZone" 
+            label="Availability Zone"
+            rules={[{ required: true, message: 'Please select availability zone' }]}
+          >
+            <Select placeholder="Select availability zone">
+              {availabilityZones.map(zone => (
+                <Select.Option key={zone.ZoneName} value={zone.ZoneName}>
+                  {zone.ZoneName} ({zone.ZoneId})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item 
+            name="AcceleratedTrainingPlanArn" 
+            label="Flexible Training Plan ARN (Optional)"
+            extra="Leave empty if not using flexible training plan"
+          >
+            <Input placeholder="arn:aws:sagemaker:region:account:training-plan/..." />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

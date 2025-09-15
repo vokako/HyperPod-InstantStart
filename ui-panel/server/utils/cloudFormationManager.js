@@ -30,12 +30,12 @@ class CloudFormationManager {
   }
 
   /**
-   * 创建CloudFormation Stack
+   * 创建EKS集群Stack
    * @param {Object} config - 集群配置
    * @param {Object} cidrConfig - CIDR配置
    * @returns {Promise<Object>} 创建结果
    */
-  static async createStack(config, cidrConfig) {
+  static async createEKSStack(config, cidrConfig) {
     try {
       const { clusterTag, awsRegion, stackName } = config;
       
@@ -213,6 +213,148 @@ class CloudFormationManager {
       --region ${region} \\
       --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \\
       --parameters ${parameterString}`;
+  }
+
+  /**
+   * 获取Stack输出信息（用于HyperPod部署）
+   * @param {string} stackName - 现有EKS Stack名称
+   * @param {string} region - AWS区域
+   * @returns {Promise<Object>} Stack输出信息
+   */
+  static async fetchStackInfo(stackName, region) {
+    try {
+      const command = `aws cloudformation describe-stacks --stack-name ${stackName} --region ${region} --query 'Stacks[0].Outputs' --output json`;
+      const result = execSync(command, { encoding: 'utf8' });
+      const outputs = JSON.parse(result);
+      
+      // 解析关键输出
+      const stackInfo = {};
+      outputs.forEach(output => {
+        switch(output.OutputKey) {
+          case 'OutputVpcId':
+            stackInfo.VPC_ID = output.OutputValue;
+            break;
+          case 'OutputSecurityGroupId':
+            stackInfo.SECURITY_GROUP_ID = output.OutputValue;
+            break;
+          case 'OutputEKSClusterName':
+            stackInfo.EKS_CLUSTER_NAME = output.OutputValue;
+            break;
+          case 'OutputSageMakerIAMRoleArn':
+            stackInfo.SAGEMAKER_ROLE_ARN = output.OutputValue;
+            // 提取role名称
+            stackInfo.SAGEMAKER_ROLE_NAME = output.OutputValue.split('/').pop();
+            break;
+          case 'OutputS3BucketName':
+            stackInfo.S3_BUCKET_NAME = output.OutputValue;
+            break;
+        }
+      });
+      
+      // 获取NAT Gateway
+      if (stackInfo.VPC_ID) {
+        stackInfo.NAT_GATEWAY_ID = await this.getNatGatewayId(stackInfo.VPC_ID, region);
+      }
+      
+      return stackInfo;
+    } catch (error) {
+      console.error('Error fetching stack info:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取HyperPod模板路径
+   * @returns {string} HyperPod模板文件的绝对路径
+   */
+  static getHyperPodTemplatePath() {
+    const envTemplatePath = process.env.HYPERPOD_TEMPLATE_PATH;
+    
+    if (!envTemplatePath) {
+      throw new Error('HyperPod template path not configured. Please set HYPERPOD_TEMPLATE_PATH in client/user.env');
+    }
+    
+    // 使用挂载的项目根目录
+    const projectRoot = path.join(__dirname, '../../hyperpod-instantstart');
+    return path.join(projectRoot, envTemplatePath);
+  }
+
+  /**
+   * 创建HyperPod Stack
+   * @param {string} stackName - Stack名称
+   * @param {string} region - AWS区域
+   * @param {Object} stackInfo - 从EKS stack获取的基础设施信息
+   * @param {Object} userConfig - 用户配置
+   * @returns {Promise<Object>} 创建结果
+   */
+  static async createHyperPodStack(stackName, region, stackInfo, userConfig) {
+    try {
+      // 获取HyperPod模板路径
+      const templatePath = this.getHyperPodTemplatePath();
+      
+      if (!fs.existsSync(templatePath)) {
+        throw new Error(`HyperPod template not found: ${templatePath}`);
+      }
+      
+      // 构建HyperPod参数
+      const parameters = [
+        `ParameterKey=ExistingVpcId,ParameterValue=${stackInfo.VPC_ID}`,
+        `ParameterKey=ExistingSecurityGroupId,ParameterValue=${stackInfo.SECURITY_GROUP_ID}`,
+        `ParameterKey=ExistingEKSClusterName,ParameterValue=${stackInfo.EKS_CLUSTER_NAME}`,
+        `ParameterKey=ExistingSageMakerRoleName,ParameterValue=${stackInfo.SAGEMAKER_ROLE_NAME}`,
+        `ParameterKey=ExistingS3BucketName,ParameterValue=${stackInfo.S3_BUCKET_NAME}`,
+        `ParameterKey=ExistingNatGatewayId,ParameterValue=${stackInfo.NAT_GATEWAY_ID}`,
+        ...Object.entries(userConfig).map(([key, value]) => 
+          `ParameterKey=${key},ParameterValue=${value}`
+        )
+      ];
+      
+      const parameterString = parameters.join(' ');
+      
+      const command = `aws cloudformation create-stack \\
+        --stack-name ${stackName} \\
+        --template-body file://${templatePath} \\
+        --region ${region} \\
+        --capabilities CAPABILITY_IAM \\
+        --parameters ${parameterString}`;
+      
+      console.log(`Creating HyperPod stack: ${stackName}`);
+      const result = execSync(command, { encoding: 'utf8' });
+      
+      return {
+        success: true,
+        stackName,
+        region,
+        stackId: JSON.parse(result).StackId,
+        createdAt: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('Error creating HyperPod stack:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取VPC中的NAT Gateway ID
+   * @param {string} vpcId - VPC ID
+   * @param {string} region - AWS区域
+   * @returns {Promise<string>} NAT Gateway ID
+   */
+  static async getNatGatewayId(vpcId, region) {
+    try {
+      const command = `aws ec2 describe-nat-gateways --region ${region} --filter "Name=vpc-id,Values=${vpcId}" "Name=state,Values=available" --query 'NatGateways[0].NatGatewayId' --output text`;
+      const result = execSync(command, { encoding: 'utf8' }).trim();
+      
+      if (result === 'None' || !result) {
+        console.warn(`No available NAT Gateway found in VPC ${vpcId}`);
+        return 'nat-placeholder';
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting NAT Gateway:', error);
+      return 'nat-placeholder';
+    }
   }
 
   /**
