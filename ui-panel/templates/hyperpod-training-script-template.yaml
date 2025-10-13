@@ -13,8 +13,9 @@ spec:
       replicas: REPLICAS_COUNT
       template:
         spec:
-          serviceAccountName: mlflow-service-account
+          # serviceAccountName: mlflow-service-account
           # serviceAccountName: hp-training-operator-pod-manager
+          SERVICE_ACCOUNT_CONFIG
           nodeSelector:
             beta.kubernetes.io/instance-type: INSTANCE_TYPE
           containers:

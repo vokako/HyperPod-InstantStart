@@ -4,33 +4,32 @@ metadata:
   labels:
     app.kubernetes.io/name: HyperPod
     app.kubernetes.io/managed-by: kustomize
-    app: TRAINING_JOB_NAME
-  name: TRAINING_JOB_NAME
+    app: lmf-v1
+  name: lmf-v1
 spec:
-  nprocPerNode: "NPROC_PER_NODE"
+  nprocPerNode: "4"
   replicaSpecs:
     - name: pods
-      replicas: REPLICAS_COUNT
+      replicas: 1
       template:
         spec:
-          # serviceAccountName: mlflow-service-account
+          serviceAccountName: mlflow-service-account
           # serviceAccountName: hp-training-operator-pod-manager
-          SERVICE_ACCOUNT_CONFIG
           nodeSelector:
-            beta.kubernetes.io/instance-type: INSTANCE_TYPE
+            beta.kubernetes.io/instance-type: ml.g6.12xlarge
           containers:
             - name: pytorch
-              image: DOCKER_IMAGE
+              image: 633205212955.dkr.ecr.us-west-2.amazonaws.com/sm-training-op-torch26-smhp-op-v2:latest
               imagePullPolicy: Always
               ports:
                 - containerPort: 8080 # HyperPodElasticAgent port
               resources:
                 requests:
-                  nvidia.com/gpu: NPROC_PER_NODE
-                  vpc.amazonaws.com/efa: EFA_PER_NODE
+                  nvidia.com/gpu: 4
+                  vpc.amazonaws.com/efa: 1
                 limits:
-                  nvidia.com/gpu: NPROC_PER_NODE
-                  vpc.amazonaws.com/efa: EFA_PER_NODE
+                  nvidia.com/gpu: 4
+                  vpc.amazonaws.com/efa: 1
               env:
               - name: LOGLEVEL
                 value: "INFO"
@@ -53,21 +52,21 @@ spec:
               # - name: HF_TOKEN
               #   value: "12345"
               - name: MLFLOW_TRACKING_URI
-                value: SM_MLFLOW_ARN
+                value: 
               - name: MLFLOW_EXPERIMENT_NAME
-                value: TRAINING_JOB_NAME
+                value: lmf-v1
               - name: MLFLOW_TAG_NPROCPERNODE
-                value: "NPROC_PER_NODE"
+                value: "4"
               - name: MLFLOW_TAG_REPLICAS
-                value: "REPLICAS_COUNT"
+                value: "1"
               - name: MLFLOW_TAG_EFAPERNODE
-                value: "EFA_PER_NODE"
+                value: "1"
               - name: MLFLOW_TAG_INSTANCETYPE
-                value: INSTANCE_TYPE
+                value: ml.g6.12xlarge
               - name: LMF_RECIPE_RUN_PATH
-                value: LMF_RECIPE_RUNPATH_PH
+                value: /s3/train-recipes/llama-factory-project/
               - name: LMF_RECIPE_YAML_FILE
-                value: LMF_RECIPE_YAMLFILE_PH
+                value: qwen_full_dist_template.yaml
               command: ["bash", "/docker_workspace/lmf_recipe_dist_run.sh"]
               volumeMounts:
                 - name: persistent-storage-s3
@@ -108,4 +107,4 @@ spec:
       numRestartBeforeFullJobRestart: 3
       evalPeriodSeconds: 21600
       maxFullJobRestarts: 1
-    cleanPodPolicy: "All"LOG_MONITORING_CONFIG
+    cleanPodPolicy: "All"

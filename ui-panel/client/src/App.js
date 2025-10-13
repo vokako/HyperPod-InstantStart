@@ -46,7 +46,7 @@ function App() {
   const connectWebSocket = () => {
     console.log('Attempting to connect to WebSocket...');
     
-    const websocket = new WebSocket('ws://localhost:8081');
+    const websocket = new WebSocket('ws://localhost:3098');
     
     // 设置连接超时
     const connectionTimeout = setTimeout(() => {

@@ -235,7 +235,8 @@ class S3StorageManager {
             driver: 's3.csi.aws.com',
             volumeHandle: `s3-csi-driver-volume-${pvcName}`,
             volumeAttributes: {
-              bucketName: bucketName
+              bucketName: bucketName,
+              'mount-timeout-seconds': '300'
             }
           }
         }

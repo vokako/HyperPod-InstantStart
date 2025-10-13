@@ -20,9 +20,15 @@ if [ -z "$LOG_STREAMS" ]; then
     exit 1
 fi
 
+# Convert space-separated streams to comma-separated for AWS CLI
+STREAM_NAMES=$(echo $LOG_STREAMS | tr ' ' ',')
+STREAM_COUNT=$(echo $LOG_STREAMS | wc -w)
 
-FIRST_STREAM=$(echo $LOG_STREAMS | cut -d' ' -f1)
-echo "📄 Log stream: $FIRST_STREAM"
+echo "📄 Found $STREAM_COUNT log streams for job: $JOB_NAME"
+for stream in $LOG_STREAMS; do
+    echo "  - $stream"
+done
 echo "----------------------------------------"
 
-aws logs tail /aws/sagemaker/TrainingJobs --log-stream-names "$FIRST_STREAM" --follow
+# Follow all log streams
+aws logs tail /aws/sagemaker/TrainingJobs --log-stream-names "$STREAM_NAMES" --follow

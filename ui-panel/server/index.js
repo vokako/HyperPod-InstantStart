@@ -30,12 +30,12 @@ const {
 
 const app = express();
 const PORT = 3001;
-const WS_PORT = 8081; // 改为8081避免端口冲突
+const WS_PORT = 3098; // WebSocket独立端口
 
 app.use(cors());
 app.use(express.json());
 
-// WebSocket服务器用于实时更新
+// WebSocket服务器使用独立端口
 const wss = new WebSocket.Server({ port: WS_PORT });
 
 // 存储活跃的日志流
@@ -1052,6 +1052,12 @@ ${indentedConfig}`;
         .trim();
     }
     
+    // 根据MLFlow URI决定serviceAccount配置
+    let serviceAccountConfig = '';
+    if (mlflowTrackingUri && mlflowTrackingUri.trim() !== '') {
+      serviceAccountConfig = 'serviceAccountName: mlflow-service-account';
+    }
+    
     // 替换模板中的占位符
     const newYamlContent = templateContent
       .replace(/TRAINING_JOB_NAME/g, trainingJobName)
@@ -1063,6 +1069,7 @@ ${indentedConfig}`;
       .replace(/TORCH_RECIPE_PYPATH_PH/g, entryPythonScriptPath)
       .replace(/TORCH_RECIPE_PYPARAMS_PH/g, formattedPythonParams)
       .replace(/SM_MLFLOW_ARN/g, mlflowTrackingUri)
+      .replace(/SERVICE_ACCOUNT_CONFIG/g, serviceAccountConfig)
       .replace(/LOG_MONITORING_CONFIG/g, logMonitoringConfigYaml);
 
     console.log('Generated torch training YAML content:', newYamlContent);
@@ -1078,6 +1085,10 @@ ${indentedConfig}`;
     const permanentFileName = `torch_${timestamp}.yaml`;
     const permanentFilePath = path.join(__dirname, '../templates/training', permanentFileName);
 
+    // 生成部署文件名（保存到deployments/trainings/目录）
+    const deploymentFileName = `torch_${timestamp}.yaml`;
+    const deploymentFilePath = path.join(__dirname, '../deployments/trainings', deploymentFileName);
+
     // 确保temp目录存在
     const tempDir = path.join(__dirname, '../temp');
     if (!fs.existsSync(tempDir)) {
@@ -1090,6 +1101,12 @@ ${indentedConfig}`;
       fs.mkdirSync(trainingTemplateDir, { recursive: true });
     }
 
+    // 确保deployments/trainings目录存在
+    const trainingDeploymentDir = path.join(__dirname, '../deployments/trainings');
+    if (!fs.existsSync(trainingDeploymentDir)) {
+      fs.mkdirSync(trainingDeploymentDir, { recursive: true });
+    }
+
     // 写入临时文件（用于kubectl apply）
     await fs.writeFile(tempFilePath, newYamlContent);
     console.log(`Torch training YAML written to temp file: ${tempFilePath}`);
@@ -1097,6 +1114,10 @@ ${indentedConfig}`;
     // 写入永久文件（保存到templates/training/目录）
     await fs.writeFile(permanentFilePath, newYamlContent);
     console.log(`Torch training YAML saved permanently to: ${permanentFilePath}`);
+
+    // 写入部署文件（保存到deployments/trainings/目录）
+    await fs.writeFile(deploymentFilePath, newYamlContent);
+    console.log(`Torch training YAML saved to deployments: ${deploymentFilePath}`);
 
     // 应用YAML配置 - 训练任务可能需要更长时间
     const applyOutput = await executeKubectl(`apply -f ${tempFilePath}`, 60000); // 60秒超时
@@ -1397,6 +1418,12 @@ app.post('/api/launch-training', async (req, res) => {
 ${indentedConfig}`;
     }
     
+    // 根据MLFlow URI决定serviceAccount配置
+    let serviceAccountConfig = '';
+    if (mlflowTrackingUri && mlflowTrackingUri.trim() !== '') {
+      serviceAccountConfig = 'serviceAccountName: mlflow-service-account';
+    }
+    
     // 替换模板中的占位符
     const newYamlContent = templateContent
       .replace(/TRAINING_JOB_NAME/g, trainingJobName)
@@ -1408,6 +1435,7 @@ ${indentedConfig}`;
       .replace(/LMF_RECIPE_RUNPATH_PH/g, lmfRecipeRunPath)
       .replace(/LMF_RECIPE_YAMLFILE_PH/g, lmfRecipeYamlFile)
       .replace(/SM_MLFLOW_ARN/g, mlflowTrackingUri)
+      .replace(/SERVICE_ACCOUNT_CONFIG/g, serviceAccountConfig)
       .replace(/LOG_MONITORING_CONFIG/g, logMonitoringConfigYaml);
 
     console.log('Generated training YAML content:', newYamlContent);
@@ -1422,6 +1450,10 @@ ${indentedConfig}`;
     // 生成永久保存的文件名（保存到templates/training/目录）
     const permanentFileName = `lma_${timestamp}.yaml`;
     const permanentFilePath = path.join(__dirname, '../templates/training', permanentFileName);
+
+    // 生成部署文件名（保存到deployments/trainings/目录）
+    const deploymentFileName = `lma_${timestamp}.yaml`;
+    const deploymentFilePath = path.join(__dirname, '../deployments/trainings', deploymentFileName);
 
     // 确保temp目录存在
     const tempDir = path.join(__dirname, '../temp');
@@ -1712,6 +1744,12 @@ app.post('/api/launch-script-training', async (req, res) => {
 ${indentedConfig}`;
     }
     
+    // 根据MLFlow URI决定serviceAccount配置
+    let serviceAccountConfig = '';
+    if (mlflowTrackingUri && mlflowTrackingUri.trim() !== '') {
+      serviceAccountConfig = 'serviceAccountName: mlflow-service-account';
+    }
+    
     // 替换模板中的占位符
     const newYamlContent = templateContent
       .replace(/TRAINING_JOB_NAME/g, trainingJobName)
@@ -1723,6 +1761,7 @@ ${indentedConfig}`;
       .replace(/SCRIPT_RECIPE_PROJECTPATH_PH/g, projectPath)
       .replace(/SCRIPT_RECIPE_ENTRYPATH_PH/g, entryPath)
       .replace(/SM_MLFLOW_ARN/g, mlflowTrackingUri)
+      .replace(/SERVICE_ACCOUNT_CONFIG/g, serviceAccountConfig)
       .replace(/LOG_MONITORING_CONFIG/g, logMonitoringConfigYaml);
 
     console.log('Generated script training YAML content:', newYamlContent);
