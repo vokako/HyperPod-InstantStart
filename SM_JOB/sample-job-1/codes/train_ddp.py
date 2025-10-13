@@ -8,8 +8,8 @@ from torchvision import datasets, transforms
 import argparse
 
 def setup_ddp():
-    # torchrun会自动设置这些环境变量
-    dist.init_process_group(backend='gloo')
+    
+    dist.init_process_group(backend='nccl')
     
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -76,7 +76,7 @@ def train(args):
                 print(f'Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.6f}')
     
     if rank == 0:
-        # SM_PATH = os.environ['SM_PATH']
+        
         ckpt_path = f'/opt/ml/checkpoints/saves'
         os.system(f'mkdir -p {ckpt_path}')
         torch.save(model.module.state_dict(), f'{ckpt_path}/model.pth')

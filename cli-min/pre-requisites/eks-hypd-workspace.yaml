@@ -127,7 +127,7 @@ Resources:
           ToPort: 22
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
-          FromPort: 3099
+          FromPort: 3098
           ToPort: 3099
           CidrIp: 0.0.0.0/0
 

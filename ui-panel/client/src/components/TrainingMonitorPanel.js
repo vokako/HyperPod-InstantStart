@@ -67,7 +67,7 @@ const TrainingMonitorPanel = () => {
     setConnectionStatus('connecting');
     
     const connectWebSocket = () => {
-      const ws = new WebSocket('ws://localhost:8081');
+      const ws = new WebSocket('ws://localhost:3098');
       
       ws.onopen = () => {
         console.log('WebSocket connected for training monitor');

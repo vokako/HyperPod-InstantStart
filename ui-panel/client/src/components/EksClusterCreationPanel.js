@@ -242,7 +242,16 @@ const EksClusterCreationPanel = () => {
     const now = new Date();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
-    const uuid4 = crypto.randomUUID().substring(0, 4);
+    
+    // 兼容性UUID生成 - 支持不同浏览器环境
+    let uuid4;
+    if (crypto && crypto.randomUUID) {
+      uuid4 = crypto.randomUUID().substring(0, 4);
+    } else {
+      // 降级方案：生成4位随机字符串
+      uuid4 = Math.random().toString(36).substring(2, 6);
+    }
+    
     return `hypd-${month}${day}-${uuid4}`;
   };
 

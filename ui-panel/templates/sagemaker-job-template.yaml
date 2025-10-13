@@ -47,7 +47,7 @@ spec:
   environment:
     SAGEMAKER_PROGRAM: "/opt/ml/input/data/userdatas/ENTRY_PYTHON_PATH"
     SM_PATH: "/opt/ml/input/data/userdatas"
-    # NCCL_SOCKET_IFNAME: "eth0"
+    NCCL_SOCKET_IFNAME: "eth0"
     FI_PROVIDER: "efa"
     NCCL_DEBUG: "DEBUG"
     NPROC_PER_NODE: GPU_PER_NODE
