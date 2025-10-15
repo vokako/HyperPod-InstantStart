@@ -49,7 +49,7 @@ HyperPod-InstantStart provides a unified interface for managing ML infrastructur
 For detailed setup instructions, please refer to [Feishu Doc (zh_cn)](https://amzn-chn.feishu.cn/docx/VZfAdXTJKor7TCxPrZdcbGYXnaf?from=from_copylink), or [Lark Doc (en)](https://amzn-chn.feishu.cn/wiki/KKgVwwfiuiof9KkAP0CcYXfnnqd?from=from_copylink)
 
 
-## Feature Roadmap
+## Upcoming Features
 - (Cluster Building) Multi-type Instance Groups
 - (Cluster Building) Flexible Cluster dependency configuration
 - (Training) TorchTitan/Whisper Training Recipe Integration
