@@ -1,5 +1,14 @@
 # HyperPod-InstantStart
 
+<p align="center">
+    <a href="https://amzn-chn.feishu.cn/wiki/KKgVwwfiuiof9KkAP0CcYXfnnqd?from=from_copylink" target="_blank">
+        <img src="https://img.shields.io/badge/Lark Guide-English-blue" alt="English Documentation">
+    </a>
+    <a href="https://amzn-chn.feishu.cn/docx/VZfAdXTJKor7TCxPrZdcbGYXnaf?from=from_copylink" target="_blank">
+        <img src="https://img.shields.io/badge/飞书文档-中文-orange" alt="Chinese Documentation">
+    </a>
+</p>
+
 HyperPod InstantStart is a training-and-inference integrated platform built on SageMaker HyperPod. It utilizes standard EKS orchestration and supports training and inference tasks with arbitrary GPU resource granularity. 
 
 ## Overview
@@ -16,32 +25,18 @@ HyperPod-InstantStart provides a unified interface for managing ML infrastructur
 
 
 ## Demo Videos
-[Watch the demo video](./resources/deploy.mp4)
-
 
 ### Create HyperPod Cluster
-<video width="600" controls>
-  <source src="./resources/hypd-create.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+![hypd create](./resources/hypd-create.gif)
 
 ### Download Model from HuggingFace
-<video width="600" controls>
-  <source src="./resources/model-download.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+![model download](./resources/model-download.gif)
 
 ### Model Deployment from S3
-<video width="600" controls>
-  <source src="./resources/deploy.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+![deploy](./resources/deploy.gif)
 
 ### Distributed Verl Training with KubeRay
-<video width="600" controls>
-  <source src="./resources/verl.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+![verl](./resources/verl.gif)
 
 ## Key Components in Web UI Panel
 
