@@ -16,6 +16,8 @@ HyperPod-InstantStart provides a unified interface for managing ML infrastructur
 
 
 ## Demo Videos
+[Watch the demo video](./resources/deploy.mp4)
+
 
 ### Create HyperPod Cluster
 <video width="600" controls>
