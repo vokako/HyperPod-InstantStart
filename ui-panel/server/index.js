@@ -5488,12 +5488,18 @@ async function registerCompletedCluster(clusterTag, status = 'active') {
     
     console.log(`Successfully registered cluster: ${clusterTag}`);
     
-    // 自动设置为active cluster
+    // 自动设置为active cluster并更新kubectl配置
     try {
       await clusterManager.setActiveCluster(clusterTag);
       console.log(`Set ${clusterTag} as active cluster`);
+      
+      // 自动更新kubectl配置
+      const multiClusterAPIs = require('./multi-cluster-apis');
+      const apiInstance = new multiClusterAPIs();
+      await apiInstance.switchKubectlConfig(clusterTag);
+      console.log(`Successfully updated kubectl config for newly created cluster: ${clusterTag}`);
     } catch (error) {
-      console.error(`Failed to set ${clusterTag} as active cluster:`, error);
+      console.error(`Failed to set ${clusterTag} as active cluster or update kubectl config:`, error);
     }
     
     // 发送WebSocket通知
