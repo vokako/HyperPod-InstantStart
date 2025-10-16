@@ -609,7 +609,7 @@ class MultiClusterAPIs {
   // 导入现有集群
   async handleImportCluster(req, res) {
     try {
-      const { eksClusterName, awsRegion } = req.body;
+      const { eksClusterName, awsRegion, hyperPodClusters } = req.body;
       
       if (!eksClusterName || !awsRegion) {
         return res.status(400).json({
@@ -619,6 +619,9 @@ class MultiClusterAPIs {
       }
 
       console.log(`Importing existing cluster: ${eksClusterName} in ${awsRegion}`);
+      if (hyperPodClusters) {
+        console.log(`User specified HyperPod clusters: ${hyperPodClusters}`);
+      }
 
       // 1. 验证集群存在
       const clusterExists = await this.verifyClusterExists(eksClusterName, awsRegion);
@@ -635,7 +638,7 @@ class MultiClusterAPIs {
       // 3. 创建集群目录结构
       this.clusterManager.createClusterDirs(eksClusterName);
       
-      // 4. 生成导入配置
+      // 4. 生成导入配置（先保存配置文件）
       const importConfig = {
         CLUSTER_TYPE: 'imported',
         EKS_CLUSTER_NAME: eksClusterName,
@@ -644,15 +647,23 @@ class MultiClusterAPIs {
         SKIP_CLOUDFORMATION: 'true'
       };
       
-      await this.clusterManager.saveImportConfig(eksClusterName, importConfig, accessResult);
-      
-      // 5. 设置为活跃集群
-      this.clusterManager.setActiveCluster(eksClusterName);
-      
-      // 6. 更新kubectl配置
+      // 5. 先保存基础配置（不包含检测状态）
+      const hasHyperPod = hyperPodClusters && hyperPodClusters.trim();
+      await this.clusterManager.saveImportConfigBasic(eksClusterName, importConfig, accessResult, hasHyperPod);
+
+      // 6. 更新kubectl配置（现在init_envs文件已存在）
       await this.switchKubectlConfig(eksClusterName);
 
-      // 7. 获取节点数量
+      // 7. 检测集群实际状态（传递用户指定的HyperPod集群）
+      const detectedState = await this.detectClusterState(eksClusterName, awsRegion, hyperPodClusters);
+      
+      // 8. 更新配置文件包含检测状态
+      await this.clusterManager.updateImportConfigWithDetectedState(eksClusterName, detectedState);
+      
+      // 9. 设置为活跃集群
+      this.clusterManager.setActiveCluster(eksClusterName);
+
+      // 10. 获取节点数量
       const nodeCount = await this.getNodeCount();
       
       res.json({
@@ -660,7 +671,8 @@ class MultiClusterAPIs {
         message: `Successfully imported cluster: ${eksClusterName}`,
         clusterTag: eksClusterName,
         nodeCount,
-        accessInfo: accessResult
+        accessInfo: accessResult,
+        detectedState: detectedState
       });
 
     } catch (error) {
@@ -725,6 +737,197 @@ class MultiClusterAPIs {
         } else {
           resolve(parseInt(stdout.trim()) || 0);
         }
+      });
+    });
+  }
+
+  // 检测集群实际状态
+  async detectClusterState(eksClusterName, awsRegion, userSpecifiedHyperPodClusters = null) {
+    console.log(`Detecting state for cluster: ${eksClusterName}`);
+    
+    const state = {
+      dependencies: await this.detectDependencies(),
+      hyperPodClusters: await this.detectHyperPodClusters(eksClusterName, awsRegion, userSpecifiedHyperPodClusters),
+      nodeGroups: await this.detectNodeGroups(),
+      detectedAt: new Date().toISOString()
+    };
+    
+    console.log('Detected cluster state:', JSON.stringify(state, null, 2));
+    return state;
+  }
+
+  // 检测依赖组件状态
+  async detectDependencies() {
+    const components = {
+      helmDependencies: false,
+      nlbController: false,
+      s3CsiDriver: false,
+      kuberayOperator: false,
+      certManager: false
+    };
+
+    try {
+      // 检测 AWS Load Balancer Controller
+      const nlbResult = await this.execCommand('kubectl get deployment -n kube-system aws-load-balancer-controller --no-headers 2>/dev/null');
+      components.nlbController = nlbResult.success && nlbResult.output.includes('aws-load-balancer-controller');
+
+      // 检测 S3 CSI Driver
+      const s3Result = await this.execCommand('kubectl get daemonset -n kube-system s3-csi-node --no-headers 2>/dev/null');
+      components.s3CsiDriver = s3Result.success && s3Result.output.includes('s3-csi-node');
+
+      // 检测 KubeRay Operator
+      const kuberayResult = await this.execCommand('kubectl get deployment -n kuberay-operator kuberay-operator --no-headers 2>/dev/null');
+      components.kuberayOperator = kuberayResult.success && kuberayResult.output.includes('kuberay-operator');
+
+      // 检测 Cert Manager
+      const certResult = await this.execCommand('kubectl get pods -n cert-manager --no-headers 2>/dev/null');
+      components.certManager = certResult.success && certResult.output.includes('cert-manager');
+
+      // 检测 Helm 相关组件 (简化检测)
+      components.helmDependencies = components.nlbController && components.s3CsiDriver;
+
+    } catch (error) {
+      console.warn('Error detecting dependencies:', error.message);
+    }
+
+    const configured = Object.values(components).filter(Boolean).length >= 3; // 至少3个组件正常
+    
+    return {
+      configured,
+      status: configured ? 'success' : 'pending',
+      components,
+      lastDetected: new Date().toISOString()
+    };
+  }
+
+  // 检测 HyperPod 集群 - 使用用户指定的集群名称
+  async detectHyperPodClusters(eksClusterName, awsRegion, userSpecifiedCluster = null) {
+    try {
+      const relatedClusters = [];
+      
+      if (userSpecifiedCluster && userSpecifiedCluster.trim()) {
+        // 使用用户指定的HyperPod集群名称（单个）
+        const clusterName = userSpecifiedCluster.trim();
+        console.log(`Using user-specified HyperPod cluster: ${clusterName}`);
+        
+        try {
+          // 验证HyperPod集群是否存在
+          const detailResult = await this.execCommand(`aws sagemaker describe-cluster --cluster-name ${clusterName} --region ${awsRegion} --output json 2>/dev/null`);
+          if (detailResult.success) {
+            const clusterDetail = JSON.parse(detailResult.output);
+            relatedClusters.push({
+              name: clusterDetail.ClusterName,
+              arn: clusterDetail.ClusterArn,
+              status: clusterDetail.ClusterStatus,
+              creationTime: clusterDetail.CreationTime
+            });
+            console.log(`Found user-specified HyperPod cluster: ${clusterName}`);
+          } else {
+            console.warn(`User-specified HyperPod cluster not found: ${clusterName}`);
+          }
+        } catch (error) {
+          console.warn(`Failed to verify HyperPod cluster ${clusterName}:`, error.message);
+        }
+      } else {
+        // 如果用户没有指定，则不检测任何HyperPod集群
+        console.log('No HyperPod cluster specified by user, skipping detection');
+      }
+      
+      return relatedClusters;
+    } catch (error) {
+      console.warn('Error detecting HyperPod clusters:', error.message);
+    }
+    return [];
+  }
+
+  // 检测节点组
+  async detectNodeGroups() {
+    try {
+      const result = await this.execCommand('kubectl get nodes -o json 2>/dev/null');
+      if (result.success) {
+        const nodes = JSON.parse(result.output);
+        const nodeGroups = {};
+        
+        nodes.items?.forEach(node => {
+          const nodeGroup = node.metadata?.labels?.['eks.amazonaws.com/nodegroup'] || 'unknown';
+          const instanceType = node.metadata?.labels?.['node.kubernetes.io/instance-type'] || 'unknown';
+          
+          if (!nodeGroups[nodeGroup]) {
+            nodeGroups[nodeGroup] = {
+              name: nodeGroup,
+              instanceType,
+              nodeCount: 0,
+              nodes: []
+            };
+          }
+          nodeGroups[nodeGroup].nodeCount++;
+          nodeGroups[nodeGroup].nodes.push(node.metadata.name);
+        });
+        
+        return Object.values(nodeGroups);
+      }
+    } catch (error) {
+      console.warn('Error detecting node groups:', error.message);
+    }
+    return [];
+  }
+
+  // 重新检测集群状态
+  async handleRedetectClusterState(req, res) {
+    try {
+      const { clusterTag } = req.params;
+      
+      if (!clusterTag) {
+        return res.status(400).json({
+          success: false,
+          error: 'clusterTag is required'
+        });
+      }
+
+      console.log(`Re-detecting state for cluster: ${clusterTag}`);
+
+      // 获取集群信息
+      const clusterInfo = this.clusterManager.getClusterInfo(clusterTag);
+      if (!clusterInfo) {
+        return res.status(404).json({
+          success: false,
+          error: 'Cluster not found'
+        });
+      }
+
+      // 切换到目标集群
+      await this.switchKubectlConfig(clusterTag);
+
+      // 重新检测状态
+      const detectedState = await this.detectClusterState(clusterTag, clusterInfo.config?.awsRegion);
+      
+      // 更新集群信息
+      await this.clusterManager.updateClusterDetectedState(clusterTag, detectedState);
+      
+      res.json({
+        success: true,
+        message: `Successfully re-detected state for cluster: ${clusterTag}`,
+        detectedState: detectedState
+      });
+
+    } catch (error) {
+      console.error('Error re-detecting cluster state:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+
+  // 执行命令的辅助方法
+  async execCommand(command) {
+    return new Promise((resolve) => {
+      exec(command, (error, stdout, stderr) => {
+        resolve({
+          success: !error,
+          output: stdout.trim(),
+          error: error?.message || stderr
+        });
       });
     });
   }

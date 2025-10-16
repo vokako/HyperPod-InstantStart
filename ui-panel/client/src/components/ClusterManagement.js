@@ -45,12 +45,51 @@ const { Title, Text } = Typography;
 const { Step } = Steps;
 const { Option } = Select;
 
-// 依赖配置状态显示组件（简化版）
-const DependencyStatus = ({ dependenciesConfigured }) => {
+// 依赖配置状态显示组件（增强版）
+const DependencyStatus = ({ cluster, dependenciesConfigured }) => {
   // 获取状态显示
   const getDependencyStatusDisplay = () => {
-    if (dependenciesConfigured === undefined) return <Text type="secondary">Loading...</Text>;
+    if (dependenciesConfigured === undefined && !cluster?.dependencies) {
+      return <Text type="secondary">Loading...</Text>;
+    }
     
+    // 优先使用cluster对象中的详细状态信息
+    if (cluster?.dependencies) {
+      const deps = cluster.dependencies;
+      const isImported = cluster.type === 'imported';
+      
+      if (isImported) {
+        // 导入的集群：区分有无HyperPod
+        if (cluster.hasHyperPod) {
+          // 有HyperPod的导入集群：显示N/A
+          return <Tag color="default">N/A</Tag>;
+        } else {
+          // 纯EKS导入集群：检查是否配置过依赖
+          if (deps.configured !== undefined) {
+            // 用户曾经配置过依赖，显示配置状态
+            if (deps.configured) {
+              return <Tag color="green">Configured</Tag>;
+            } else {
+              return <Tag color="warning">Not Configured</Tag>;
+            }
+          } else {
+            // 从未配置过依赖，显示Not Configured（需要配置）
+            return <Tag color="warning">Not Configured</Tag>;
+          }
+        }
+      } else {
+        // 创建的集群：显示配置状态
+        if (deps.configured) {
+          return <Tag color="green">Configured</Tag>;
+        } else if (deps.detected && deps.effectiveStatus) {
+          return <Tag color="blue">Detected</Tag>;
+        } else {
+          return <Tag color="warning">Not Configured</Tag>;
+        }
+      }
+    }
+    
+    // 兼容旧的简单状态
     if (dependenciesConfigured) {
       return <Tag color="green">Configured</Tag>;
     } else {
@@ -999,77 +1038,78 @@ const ClusterManagement = () => {
                         </Row>
 
                         {/* 集群信息显示 */}
-                        {activeCluster && (
-                          <Card title="Cluster Details" size="small">
-                            {(() => {
-                              const cluster = clusters.find(c => c.clusterTag === activeCluster);
-                              if (!cluster) return <Text type="secondary">Loading cluster information...</Text>;
-                              
-                              // 统一获取cluster tag和region
-                              const clusterTag = cluster.clusterTag || cluster.config?.clusterTag || 'N/A';
-                              const region = cluster.region || cluster.config?.awsRegion || 'N/A';
-                              const creationType = cluster.type === 'imported' ? 'Imported' : 'Created';
-                              const creationColor = cluster.type === 'imported' ? 'blue' : 'green';
-                              
-                              // 从API获取的详细信息
-                              const eksClusterName = clusterDetails?.eksClusterName || 'N/A';
-                              const vpcId = clusterDetails?.vpcId || 'N/A';
-                              
-                              return (
-                                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                                  <Row gutter={[16, 16]}>
-                                    <Col span={12}>
-                                      <div>
-                                        <Text strong>Custom Tag:</Text>
-                                        <br />
-                                        <Text code>{clusterTag}</Text>
-                                      </div>
-                                    </Col>
-                                    <Col span={12}>
-                                      <div>
-                                        <Text strong>AWS Region:</Text>
-                                        <br />
-                                        <Text code>{region}</Text>
-                                      </div>
-                                    </Col>
-                                  </Row>
-                                  <Row gutter={[16, 16]}>
-                                    <Col span={12}>
-                                      <div>
-                                        <Text strong>EKS Cluster Name:</Text>
-                                        <br />
-                                        <Text code>{eksClusterName}</Text>
-                                      </div>
-                                    </Col>
-                                    <Col span={12}>
-                                      <div>
-                                        <Text strong>Computer Node VPC:</Text>
-                                        <br />
-                                        <Text code>{vpcId}</Text>
-                                      </div>
-                                    </Col>
-                                  </Row>
-                                  <Row gutter={[16, 16]}>
-                                    <Col span={12}>
-                                      <div>
-                                        <Text strong>Creation Type:</Text>
-                                        <br />
-                                        <Tag color={creationColor}>{creationType}</Tag>
-                                      </div>
-                                    </Col>
-                                    <Col span={12}>
-                                      <div>
-                                        <Text strong>Dependencies:</Text>
-                                        <br />
-                                        <DependencyStatus dependenciesConfigured={dependenciesConfigured} />
-                                      </div>
-                                    </Col>
-                                  </Row>
-                                </Space>
-                              );
-                            })()}
-                          </Card>
-                        )}
+                        {activeCluster && (() => {
+                          const cluster = clusters.find(c => c.clusterTag === activeCluster);
+                          if (!cluster) return <Text type="secondary">Loading cluster information...</Text>;
+                          
+                          // 统一获取cluster tag和region
+                          const clusterTag = cluster.clusterTag || cluster.config?.clusterTag || 'N/A';
+                          const region = cluster.region || cluster.config?.awsRegion || 'N/A';
+                          const creationType = cluster.type === 'imported' ? 'Imported' : 'Created';
+                          const creationColor = cluster.type === 'imported' ? 'blue' : 'green';
+                          
+                          // 从API获取的详细信息
+                          const eksClusterName = clusterDetails?.eksClusterName || 'N/A';
+                          const vpcId = clusterDetails?.vpcId || 'N/A';
+                          
+                          return (
+                            <Card title="Cluster Details" size="small">
+                              <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                                <Row gutter={[16, 16]}>
+                                  <Col span={12}>
+                                    <div>
+                                      <Text strong>Custom Tag:</Text>
+                                      <br />
+                                      <Text code>{clusterTag}</Text>
+                                    </div>
+                                  </Col>
+                                  <Col span={12}>
+                                    <div>
+                                      <Text strong>AWS Region:</Text>
+                                      <br />
+                                      <Text code>{region}</Text>
+                                    </div>
+                                  </Col>
+                                </Row>
+                                <Row gutter={[16, 16]}>
+                                  <Col span={12}>
+                                    <div>
+                                      <Text strong>EKS Cluster Name:</Text>
+                                      <br />
+                                      <Text code>{eksClusterName}</Text>
+                                    </div>
+                                  </Col>
+                                  <Col span={12}>
+                                    <div>
+                                      <Text strong>Compute Node VPC:</Text>
+                                      <br />
+                                      <Text code>{vpcId}</Text>
+                                    </div>
+                                  </Col>
+                                </Row>
+                                <Row gutter={[16, 16]}>
+                                  <Col span={12}>
+                                    <div>
+                                      <Text strong>Creation Type:</Text>
+                                      <br />
+                                      <Tag color={creationColor}>{creationType}</Tag>
+                                    </div>
+                                  </Col>
+                                  <Col span={12}>
+                                    <div>
+                                      <Text strong>Dependencies:</Text>
+                                      <br />
+                                      <DependencyStatus 
+                                        cluster={cluster} 
+                                        dependenciesConfigured={dependenciesConfigured} 
+                                      />
+                                    </div>
+                                  </Col>
+                                </Row>
+                              </Space>
+                            </Card>
+                          );
+                        })()}
                       </div>
                     </Col>
                     
@@ -1082,6 +1122,7 @@ const ClusterManagement = () => {
                           onDependencyStatusChange={setDependenciesConfigured}
                           onRefreshClusterDetails={fetchClusterDetails}
                           refreshTrigger={refreshTrigger}
+                          cluster={clusters.find(c => c.clusterTag === activeCluster)}
                         />
                       ) : (
                         <Card title="Node Groups" style={{ height: '100%' }}>
@@ -1660,6 +1701,16 @@ const ClusterManagement = () => {
           extra="The AWS region where your EKS cluster is located"
         >
           <Input placeholder="us-west-2" />
+        </Form.Item>
+
+        <Form.Item
+          label="HyperPod Cluster Name (Optional)"
+          name="hyperPodClusters"
+          extra="Enter the HyperPod cluster name associated with this EKS cluster"
+        >
+          <Input 
+            placeholder="hp-cluster-name"
+          />
         </Form.Item>
 
         <Divider />

@@ -249,7 +249,7 @@ class ClusterManager {
   }
 
   // 保存导入集群配置
-  async saveImportConfig(clusterTag, importConfig, accessInfo = null) {
+  async saveImportConfig(clusterTag, importConfig, accessInfo = null, detectedState = null) {
     const configDir = this.getClusterConfigDir(clusterTag);
     const initEnvsPath = path.join(configDir, 'init_envs');
     
@@ -277,7 +277,8 @@ class ClusterManager {
         policies: accessInfo.policies || [],
         configuredAt: new Date().toISOString(),
         message: accessInfo.message
-      } : null
+      } : null,
+      detectedState: detectedState || null
     };
     
     fs.writeFileSync(
@@ -296,7 +297,28 @@ class ClusterManager {
         eksClusterName: importConfig.EKS_CLUSTER_NAME,
         clusterType: 'imported'
       },
-      type: 'imported'
+      type: 'imported',
+      // 添加检测到的状态信息
+      dependencies: detectedState?.dependencies ? {
+        configured: detectedState.dependencies.configured,
+        detected: true,
+        effectiveStatus: detectedState.dependencies.configured,
+        components: detectedState.dependencies.components,
+        lastDetected: detectedState.dependencies.lastDetected
+      } : {
+        configured: false,
+        detected: false,
+        effectiveStatus: false
+      },
+      hyperPodClusters: {
+        detected: detectedState?.hyperPodClusters || [],
+        userCreated: []
+      },
+      nodeGroups: {
+        detected: detectedState?.nodeGroups || [],
+        userCreated: []
+      },
+      detectedAt: detectedState?.detectedAt || null
     };
     
     fs.writeFileSync(
@@ -304,12 +326,167 @@ class ClusterManager {
       JSON.stringify(clusterInfo, null, 2)
     );
     
-    console.log(`Created cluster info for imported cluster: ${clusterTag}`);
+    console.log(`Created cluster info for imported cluster: ${clusterTag} with detected state`);
+  }
+
+  // 保存基础导入配置（不包含检测状态）
+  async saveImportConfigBasic(clusterTag, importConfig, accessInfo = null, hasHyperPod = false) {
+    const configDir = this.getClusterConfigDir(clusterTag);
+    const initEnvsPath = path.join(configDir, 'init_envs');
+    
+    // 生成init_envs内容
+    let content = '#!/bin/bash\n\n';
+    content += '# Imported cluster configuration\n';
+    
+    Object.entries(importConfig).forEach(([key, value]) => {
+      content += `export ${key}="${value}"\n`;
+    });
+    
+    fs.writeFileSync(initEnvsPath, content);
+    console.log(`Saved basic import config for cluster: ${clusterTag}`);
+    
+    // 创建导入元数据
+    const metadataDir = this.getClusterMetadataDir(clusterTag);
+    const importMetadata = {
+      type: 'imported',
+      importedAt: new Date().toISOString(),
+      eksClusterName: importConfig.EKS_CLUSTER_NAME,
+      awsRegion: importConfig.AWS_REGION,
+      hasHyperPod: hasHyperPod,
+      accessEntry: accessInfo ? {
+        action: accessInfo.action,
+        roleArn: accessInfo.roleArn,
+        policies: accessInfo.policies || [],
+        configuredAt: new Date().toISOString(),
+        message: accessInfo.message
+      } : null
+    };
+    
+    fs.writeFileSync(
+      path.join(metadataDir, 'import_metadata.json'),
+      JSON.stringify(importMetadata, null, 2)
+    );
+    
+    // 创建基础cluster_info.json
+    const clusterInfo = {
+      clusterTag,
+      status: 'imported',
+      lastModified: new Date().toISOString(),
+      config: {
+        clusterTag,
+        awsRegion: importConfig.AWS_REGION,
+        eksClusterName: importConfig.EKS_CLUSTER_NAME,
+        clusterType: 'imported'
+      },
+      type: 'imported',
+      hasHyperPod: hasHyperPod,
+      // 根据是否有HyperPod设置不同的依赖状态
+      dependencies: hasHyperPod ? {
+        // 有HyperPod的导入集群：不需要配置依赖
+        detected: false,
+        effectiveStatus: false
+        // 不设置configured字段，表示N/A状态
+      } : {
+        // 纯EKS导入集群：需要配置依赖
+        configured: false,
+        detected: false,
+        effectiveStatus: false
+      },
+      hyperPodClusters: {
+        detected: [],
+        userCreated: []
+      },
+      nodeGroups: {
+        detected: [],
+        userCreated: []
+      }
+    };
+    
+    fs.writeFileSync(
+      path.join(metadataDir, 'cluster_info.json'),
+      JSON.stringify(clusterInfo, null, 2)
+    );
+    
+    console.log(`Created basic cluster info for imported cluster: ${clusterTag} (hasHyperPod: ${hasHyperPod})`);
+  }
+
+  // 更新导入配置包含检测状态
+  async updateImportConfigWithDetectedState(clusterTag, detectedState) {
+    const metadataDir = this.getClusterMetadataDir(clusterTag);
+    const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+    
+    if (!fs.existsSync(clusterInfoPath)) {
+      throw new Error(`Cluster info not found for: ${clusterTag}`);
+    }
+    
+    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+    
+    // 更新检测状态
+    clusterInfo.dependencies = detectedState?.dependencies ? {
+      configured: clusterInfo.dependencies?.configured || false,
+      detected: true,
+      effectiveStatus: detectedState.dependencies.configured,
+      components: detectedState.dependencies.components,
+      lastDetected: detectedState.dependencies.lastDetected
+    } : clusterInfo.dependencies;
+    
+    clusterInfo.hyperPodClusters = {
+      detected: detectedState?.hyperPodClusters || [],
+      userCreated: clusterInfo.hyperPodClusters?.userCreated || []
+    };
+    
+    clusterInfo.nodeGroups = {
+      detected: detectedState?.nodeGroups || [],
+      userCreated: clusterInfo.nodeGroups?.userCreated || []
+    };
+    
+    clusterInfo.detectedAt = detectedState?.detectedAt || new Date().toISOString();
+    clusterInfo.lastModified = new Date().toISOString();
+    
+    fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+    console.log(`Updated cluster info with detected state for: ${clusterTag}`);
   }
 
   // 检查集群是否存在
   clusterExists(clusterTag) {
     return fs.existsSync(this.getClusterDir(clusterTag));
+  }
+
+  // 更新集群检测状态
+  async updateClusterDetectedState(clusterTag, detectedState) {
+    const metadataDir = this.getClusterMetadataDir(clusterTag);
+    const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+    
+    if (!fs.existsSync(clusterInfoPath)) {
+      throw new Error(`Cluster info not found for: ${clusterTag}`);
+    }
+    
+    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+    
+    // 更新检测状态
+    clusterInfo.dependencies = detectedState?.dependencies ? {
+      configured: clusterInfo.dependencies?.configured || false,
+      detected: true,
+      effectiveStatus: detectedState.dependencies.configured,
+      components: detectedState.dependencies.components,
+      lastDetected: detectedState.dependencies.lastDetected
+    } : clusterInfo.dependencies;
+    
+    clusterInfo.hyperPodClusters = {
+      detected: detectedState?.hyperPodClusters || [],
+      userCreated: clusterInfo.hyperPodClusters?.userCreated || []
+    };
+    
+    clusterInfo.nodeGroups = {
+      detected: detectedState?.nodeGroups || [],
+      userCreated: clusterInfo.nodeGroups?.userCreated || []
+    };
+    
+    clusterInfo.detectedAt = detectedState?.detectedAt || new Date().toISOString();
+    clusterInfo.lastModified = new Date().toISOString();
+    
+    fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+    console.log(`Updated detected state for cluster: ${clusterTag}`);
   }
 
   // 保存EKS集群创建配置

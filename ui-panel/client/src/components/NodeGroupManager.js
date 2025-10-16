@@ -7,7 +7,7 @@ import EksNodeGroupCreationPanel from './EksNodeGroupCreationPanel';
 
 const { Text } = Typography;
 
-const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDependencyStatusChange, onRefreshClusterDetails, refreshTrigger }) => {
+const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDependencyStatusChange, onRefreshClusterDetails, refreshTrigger, cluster }) => {
   const [loading, setLoading] = useState(false);
   const [scaleLoading, setScaleLoading] = useState(false);
   const [eksNodeGroups, setEksNodeGroups] = useState([]);
@@ -22,6 +22,18 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
   const [scaleTarget, setScaleTarget] = useState(null);
   const [form] = Form.useForm();
   const [hyperPodForm] = Form.useForm();
+
+  // 计算有效的依赖配置状态
+  const getEffectiveDependenciesStatus = () => {
+    // 如果cluster对象存在且有dependencies信息，优先使用
+    if (cluster?.dependencies) {
+      return cluster.dependencies.effectiveStatus || cluster.dependencies.configured;
+    }
+    // 兼容旧的简单状态
+    return dependenciesConfigured;
+  };
+
+  const effectiveDependenciesConfigured = getEffectiveDependenciesStatus();
 
   const fetchClusterInfo = async () => {
     try {
@@ -422,14 +434,14 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
                 fetchClusterInfo(); // 确保获取最新信息
               }}
               disabled={
-                !dependenciesConfigured ||   // 依赖未配置时禁用
+                !effectiveDependenciesConfigured ||   // 依赖未配置时禁用
                 !!hyperPodCreationStatus ||  // 创建中时禁用
                 !!hyperPodDeletionStatus ||  // 删除中时禁用
                 hyperPodGroups.length > 0    // 已存在HyperPod时禁用
               }
               loading={hyperPodCreationStatus === 'creating'}
               title={
-                !dependenciesConfigured 
+                !effectiveDependenciesConfigured 
                   ? "Dependencies must be configured first"
                   : hyperPodCreationStatus 
                     ? "HyperPod creation in progress" 
@@ -442,19 +454,32 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
             >
               Create HyperPod
             </Button>
-            {hyperPodGroups.length > 0 && (
-              <Button 
-                type="default"
-                danger
-                size="small"
-                loading={hyperPodDeletionStatus === 'deleting'}
-                onClick={handleDeleteHyperPod}
-                disabled={!!hyperPodCreationStatus || !!hyperPodDeletionStatus}
-                title="Delete HyperPod cluster and all instance groups"
-              >
-                Delete HyperPod
-              </Button>
-            )}
+            {hyperPodGroups.length > 0 && (() => {
+              // 检查是否为导入的EKS+HyperPod集群
+              const isImportedWithHyperPod = cluster?.type === 'imported' && cluster?.hasHyperPod;
+              
+              return (
+                <Button 
+                  type="default"
+                  danger
+                  size="small"
+                  loading={hyperPodDeletionStatus === 'deleting'}
+                  onClick={handleDeleteHyperPod}
+                  disabled={
+                    !!hyperPodCreationStatus || 
+                    !!hyperPodDeletionStatus || 
+                    isImportedWithHyperPod  // 导入的EKS+HyperPod集群禁用删除
+                  }
+                  title={
+                    isImportedWithHyperPod 
+                      ? "Cannot delete HyperPod cluster from imported EKS+HyperPod setup"
+                      : "Delete HyperPod cluster and all instance groups"
+                  }
+                >
+                  Delete HyperPod
+                </Button>
+              );
+            })()}
           </Space>
         }
       >
@@ -499,9 +524,9 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
             size="small"
             icon={<PlusOutlined />}
             onClick={() => setCreateEksNodeGroupModalVisible(true)}
-            disabled={!dependenciesConfigured}
+            disabled={!effectiveDependenciesConfigured}
             title={
-              !dependenciesConfigured 
+              !effectiveDependenciesConfigured 
                 ? "Dependencies must be configured first"
                 : "Create Node Group"
             }
