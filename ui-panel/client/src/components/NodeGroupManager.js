@@ -206,6 +206,15 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
       await checkHyperPodCreationStatus();
     });
 
+    // 监听HyperPod创建完成的WebSocket消息
+    operationRefreshManager.subscribe('hyperpod-create', async (data) => {
+      if (data.type === 'hyperpod_creation_completed') {
+        console.log('🎉 HyperPod creation completed, refreshing node groups...');
+        await fetchNodeGroups();
+        await checkHyperPodCreationStatus();
+      }
+    });
+
     // 监听HyperPod删除相关的WebSocket消息
     operationRefreshManager.subscribe('hyperpod-delete', async (data) => {
       if (data.type === 'hyperpod_deletion_started') {
@@ -222,6 +231,7 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
     return () => {
       globalRefreshManager.unsubscribe('nodegroup-manager');
       operationRefreshManager.unsubscribe('nodegroup-manager');
+      operationRefreshManager.unsubscribe('hyperpod-create');
       operationRefreshManager.unsubscribe('hyperpod-delete');
     };
   }, []);

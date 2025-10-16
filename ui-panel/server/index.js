@@ -5488,12 +5488,18 @@ async function registerCompletedCluster(clusterTag, status = 'active') {
     
     console.log(`Successfully registered cluster: ${clusterTag}`);
     
-    // 自动设置为active cluster
+    // 自动设置为active cluster并更新kubectl配置
     try {
       await clusterManager.setActiveCluster(clusterTag);
       console.log(`Set ${clusterTag} as active cluster`);
+      
+      // 自动更新kubectl配置
+      const multiClusterAPIs = require('./multi-cluster-apis');
+      const apiInstance = new multiClusterAPIs();
+      await apiInstance.switchKubectlConfig(clusterTag);
+      console.log(`Successfully updated kubectl config for newly created cluster: ${clusterTag}`);
     } catch (error) {
-      console.error(`Failed to set ${clusterTag} as active cluster:`, error);
+      console.error(`Failed to set ${clusterTag} as active cluster or update kubectl config:`, error);
     }
     
     // 发送WebSocket通知
@@ -6484,9 +6490,9 @@ app.get('/api/cluster/hyperpod-creation-status/:clusterTag', async (req, res) =>
         const stackStatus = execSync(checkCmd, { encoding: 'utf8', timeout: 10000 }).trim();
         
         if (stackStatus === 'CREATE_COMPLETE') {
-          // 创建完成，清理状态并注册
-          updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
+          // 创建完成，先注册HyperPod信息，再清理状态
           await registerCompletedHyperPod(clusterTag);
+          updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
           
           broadcast({
             type: 'hyperpod_creation_completed',
@@ -6545,8 +6551,8 @@ app.get('/api/cluster/creating-hyperpod-clusters', async (req, res) => {
           const stackStatus = execSync(checkCmd, { encoding: 'utf8', timeout: 10000 }).trim();
           
           if (stackStatus === 'CREATE_COMPLETE') {
-            updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
             await registerCompletedHyperPod(clusterTag);
+            updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
           } else if (stackStatus === 'DELETE_COMPLETE') {
             // 删除完成，清理metadata文件和状态
             console.log(`HyperPod deletion completed: ${clusterTag}`);
