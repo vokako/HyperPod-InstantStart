@@ -818,7 +818,7 @@ function App() {
             {/* Training - 左侧：训练配置 */}
             <Col xs={24} lg={12}>
               <Card 
-                title="HyperPodPytorchJob Recipes" 
+                title="Training Recipes" 
                 className="theme-card compute"
                 style={{ height: '50vh', overflow: 'auto' }}
               >

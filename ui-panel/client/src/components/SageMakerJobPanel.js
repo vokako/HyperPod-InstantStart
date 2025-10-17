@@ -271,33 +271,38 @@ const SageMakerJobPanel = ({ onLaunch, deploymentStatus }) => {
           </Col>
         </Row>
 
-        <Form.Item
-          label={
-            <Space>
-              <DatabaseOutlined />
-              <Text strong>SageMaker Job Dir</Text>
-            </Space>
-          }
-          name="smJobDir"
-          rules={[{ required: true, message: 'Please input SageMaker job directory!' }]}
-        >
-          <Input placeholder="sample-job-1" />
-        </Form.Item>
-
-        <Form.Item
-          label={
-            <Space>
-              <CodeOutlined />
-              <Text strong>Entry Python Script Path</Text>
-            </Space>
-          }
-          name="entryPythonScriptPath"
-          rules={[
-            { required: true, message: 'Please input entry Python script path!' }
-          ]}
-        >
-          <Input placeholder="codes/launcher.py" />
-        </Form.Item>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              label={
+                <Space>
+                  <DatabaseOutlined />
+                  <Text strong>SageMaker Job Dir</Text>
+                </Space>
+              }
+              name="smJobDir"
+              rules={[{ required: true, message: 'Please input SageMaker job directory!' }]}
+            >
+              <Input placeholder="sample-job-1" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              label={
+                <Space>
+                  <CodeOutlined />
+                  <Text strong>Entry Python Script Path</Text>
+                </Space>
+              }
+              name="entryPythonScriptPath"
+              rules={[
+                { required: true, message: 'Please input entry Python script path!' }
+              ]}
+            >
+              <Input placeholder="codes/launcher.py" />
+            </Form.Item>
+          </Col>
+        </Row>
 
         <Form.Item
           label={

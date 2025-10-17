@@ -248,38 +248,7 @@ const TorchRecipePanel = ({ onLaunch, deploymentStatus }) => {
 
         {/* 资源配置 */}
         <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item
-              label={
-                <Space>
-                  <SettingOutlined />
-                  <Text strong>Num Proc Per Node</Text>
-                </Space>
-              }
-              name="nprocPerNode"
-              rules={[{ required: true, message: 'Please input number of processes/gpus per node!' }]}
-            >
-              <InputNumber min={1} max={64} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item
-              label={
-                <Space>
-                  <ThunderboltOutlined />
-                  <Text strong>Num Replicas</Text>
-                </Space>
-              }
-              name="replicas"
-              rules={[{ required: true, message: 'Please input replicas/the amount nodes!' }]}
-            >
-              <InputNumber min={1} max={100} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        <Row gutter={16}>
-          <Col span={12}>
+          <Col span={8}>
             <Form.Item
               label={
                 <Space>
@@ -291,6 +260,34 @@ const TorchRecipePanel = ({ onLaunch, deploymentStatus }) => {
               rules={[{ required: true, message: 'Please input EFA count!' }]}
             >
               <InputNumber min={0} max={32} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item
+              label={
+                <Space>
+                  <SettingOutlined />
+                  <Text strong>GPUs Per Node</Text>
+                </Space>
+              }
+              name="nprocPerNode"
+              rules={[{ required: true, message: 'Please input number of processes/gpus per node!' }]}
+            >
+              <InputNumber min={1} max={64} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item
+              label={
+                <Space>
+                  <ThunderboltOutlined />
+                  <Text strong>Num Replicas</Text>
+                </Space>
+              }
+              name="replicas"
+              rules={[{ required: true, message: 'Please input replicas/the amount nodes!' }]}
+            >
+              <InputNumber min={1} max={100} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
         </Row>

@@ -19,9 +19,11 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
   const [scaleModalVisible, setScaleModalVisible] = useState(false);
   const [createHyperPodModalVisible, setCreateHyperPodModalVisible] = useState(false);
   const [createEksNodeGroupModalVisible, setCreateEksNodeGroupModalVisible] = useState(false);
+  const [addInstanceGroupModalVisible, setAddInstanceGroupModalVisible] = useState(false);
   const [scaleTarget, setScaleTarget] = useState(null);
   const [form] = Form.useForm();
   const [hyperPodForm] = Form.useForm();
+  const [instanceGroupForm] = Form.useForm();
 
   // 计算有效的依赖配置状态
   const getEffectiveDependenciesStatus = () => {
@@ -128,6 +130,34 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
     });
   };
 
+  const handleAddInstanceGroup = async () => {
+    try {
+      const values = await instanceGroupForm.validateFields();
+      
+      // 立即关闭Modal
+      setAddInstanceGroupModalVisible(false);
+      instanceGroupForm.resetFields();
+      
+      const response = await fetch('/api/cluster/hyperpod/add-instance-group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userConfig: values })
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        message.error(`Failed to add instance group: ${result.error}`);
+      } else {
+        message.success('Instance group addition initiated successfully');
+        // 刷新数据
+        await fetchNodeGroups();
+      }
+    } catch (error) {
+      message.error(`Error adding instance group: ${error.message}`);
+    }
+  };
+
   const handleCreateHyperPod = async () => {
     try {
       const values = await hyperPodForm.validateFields();
@@ -206,6 +236,15 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
       await checkHyperPodCreationStatus();
     });
 
+    // 监听HyperPod创建完成的WebSocket消息
+    operationRefreshManager.subscribe('hyperpod-create', async (data) => {
+      if (data.type === 'hyperpod_creation_completed') {
+        console.log('🎉 HyperPod creation completed, refreshing node groups...');
+        await fetchNodeGroups();
+        await checkHyperPodCreationStatus();
+      }
+    });
+
     // 监听HyperPod删除相关的WebSocket消息
     operationRefreshManager.subscribe('hyperpod-delete', async (data) => {
       if (data.type === 'hyperpod_deletion_started') {
@@ -222,6 +261,7 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
     return () => {
       globalRefreshManager.unsubscribe('nodegroup-manager');
       operationRefreshManager.unsubscribe('nodegroup-manager');
+      operationRefreshManager.unsubscribe('hyperpod-create');
       operationRefreshManager.unsubscribe('hyperpod-delete');
     };
   }, []);
@@ -425,6 +465,34 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
         size="small"
         extra={
           <Space>
+            <Button 
+              type="default" 
+              icon={<PlusOutlined />} 
+              size="small"
+              onClick={() => {
+                setAddInstanceGroupModalVisible(true);
+                fetchClusterInfo(); // 确保获取最新信息
+              }}
+              disabled={
+                !effectiveDependenciesConfigured ||   // 依赖未配置时禁用
+                !!hyperPodCreationStatus ||  // 创建中时禁用
+                !!hyperPodDeletionStatus ||  // 删除中时禁用
+                hyperPodGroups.length === 0    // 没有HyperPod时禁用
+              }
+              title={
+                !effectiveDependenciesConfigured 
+                  ? "Dependencies must be configured first"
+                  : hyperPodCreationStatus 
+                    ? "HyperPod creation in progress" 
+                    : hyperPodDeletionStatus
+                      ? "HyperPod deletion in progress"
+                      : hyperPodGroups.length === 0 
+                        ? "No HyperPod cluster exists"
+                        : "Add instance group to existing HyperPod cluster"
+              }
+            >
+              Add Instance Group
+            </Button>
             <Button 
               type="primary" 
               icon={<PlusOutlined />} 
@@ -705,6 +773,91 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
             name="AcceleratedTrainingPlanArn" 
             label="Flexible Training Plan ARN (Optional)"
             extra="Leave empty if not using flexible training plan"
+          >
+            <Input placeholder="arn:aws:sagemaker:region:account:training-plan/..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Add Instance Group"
+        open={addInstanceGroupModalVisible}
+        onOk={handleAddInstanceGroup}
+        onCancel={() => {
+          setAddInstanceGroupModalVisible(false);
+          instanceGroupForm.resetFields();
+        }}
+        okText="Add Instance Group"
+        width={700}
+      >
+        <Form form={instanceGroupForm} layout="vertical">
+          <Form.Item 
+            name="instanceGroupName" 
+            label="Instance Group Name"
+            rules={[{ required: true, message: 'Please input instance group name' }]}
+            extra="Name for the new instance group"
+          >
+            <Input placeholder="compute-group-new" />
+          </Form.Item>
+          
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <Form.Item 
+              name="instanceType" 
+              label="Instance Type"
+              rules={[{ required: true, message: 'Please select or input instance type' }]}
+              style={{ flex: 1 }}
+            >
+              <AutoComplete
+                placeholder="Select or type instance type"
+                options={[
+                  { value: 'ml.g5.8xlarge', label: 'ml.g5.8xlarge' },
+                  { value: 'ml.g5.12xlarge', label: 'ml.g5.12xlarge' },
+                  { value: 'ml.g5.24xlarge', label: 'ml.g5.24xlarge' },
+                  { value: 'ml.g5.48xlarge', label: 'ml.g5.48xlarge' },
+                  { value: 'ml.g6.8xlarge', label: 'ml.g6.8xlarge' },
+                  { value: 'ml.g6.12xlarge', label: 'ml.g6.12xlarge' },
+                  { value: 'ml.g6.24xlarge', label: 'ml.g6.24xlarge' },
+                  { value: 'ml.g6.48xlarge', label: 'ml.g6.48xlarge' },
+                  { value: 'ml.g6e.8xlarge', label: 'ml.g6e.8xlarge' },
+                  { value: 'ml.g6e.12xlarge', label: 'ml.g6e.12xlarge' },
+                  { value: 'ml.g6e.24xlarge', label: 'ml.g6e.24xlarge' },
+                  { value: 'ml.g6e.48xlarge', label: 'ml.g6e.48xlarge' },
+                  { value: 'ml.p4d.24xlarge', label: 'ml.p4d.24xlarge' },
+                  { value: 'ml.p5.48xlarge', label: 'ml.p5.48xlarge' },
+                  { value: 'ml.p5en.48xlarge', label: 'ml.p5en.48xlarge' },
+                  { value: 'ml.p6-b200.48xlarge', label: 'ml.p6-b200.48xlarge' }
+                ]}
+                filterOption={(inputValue, option) =>
+                  option.value.toLowerCase().indexOf(inputValue.toLowerCase()) !== -1
+                }
+              />
+            </Form.Item>
+            
+            <Form.Item 
+              name="instanceCount" 
+              label="Instance Count"
+              initialValue={1}
+              rules={[{ required: true, message: 'Please input instance count' }]}
+              style={{ flex: 1 }}
+            >
+              <InputNumber min={1} max={100} style={{ width: '100%' }} />
+            </Form.Item>
+          </div>
+
+          <Form.Item 
+            name="volumeSize" 
+            label="EBS Volume Size (GB)"
+            initialValue={300}
+            rules={[{ required: true, message: 'Please input volume size' }]}
+            extra="EBS volume size in GB"
+          >
+            <InputNumber min={100} max={16000} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item 
+            name="trainingPlanArn" 
+            label="Training Plan ARN (Optional)"
+            extra="Provide Training Plan ARN if already in valid state."
           >
             <Input placeholder="arn:aws:sagemaker:region:account:training-plan/..." />
           </Form.Item>

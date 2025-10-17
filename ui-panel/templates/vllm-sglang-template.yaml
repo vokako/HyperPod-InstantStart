@@ -31,7 +31,7 @@ spec:
               nvidia.com/gpu: GPU_COUNT
           command: VLLM_COMMAND
           ports:
-            - containerPort: 8000
+            - containerPort: PORT_NUMBER
               name: http
           volumeMounts:
             - name: persistent-storage-s3
@@ -75,7 +75,7 @@ metadata:
   annotations:NLB_ANNOTATIONS
 spec:
   ports:
-    - port: 8000
+    - port: PORT_NUMBER
       protocol: TCP
       targetPort: http
   selector:
