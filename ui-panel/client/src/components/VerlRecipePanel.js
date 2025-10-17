@@ -200,21 +200,6 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
           </Col>
         </Row>
 
-        {/* Entry Point配置 */}
-        <Form.Item
-          label={
-            <Space>
-              <CodeOutlined />
-              <Text strong>Entry Point Script Path</Text>
-            </Space>
-          }
-          name="entryPointPath"
-          rules={[{ required: true, message: 'Please input entry point path!' }]}
-          extra="Path relative to /s3/train-recipes/"
-        >
-          <Input placeholder="verl-project/src/qwen-3b-grpo-kuberay.sh" />
-        </Form.Item>
-
         {/* Docker Image - 单独一行 */}
         <Form.Item
           label={
@@ -229,9 +214,37 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
           <Input placeholder="633205212955.dkr.ecr.us-west-2.amazonaws.com/hypd-verl:latest" />
         </Form.Item>
 
+        {/* Entry Point配置 */}
+        <Form.Item
+          label={
+            <Space>
+              <CodeOutlined />
+              <Text strong>Entry Point Script Path</Text>
+            </Space>
+          }
+          name="entryPointPath"
+          rules={[{ required: true, message: 'Please input entry point path!' }]}
+          extra="Relative Path under /s3/train-recipes/"
+        >
+          <Input placeholder="verl-project/src/qwen-3b-grpo-kuberay.sh" />
+        </Form.Item>
+
         {/* 资源配置 */}
         <Row gutter={16}>
-          <Col span={8}>
+          <Col span={6}>
+            <Form.Item
+              label={
+                <Space>
+                  <ThunderboltOutlined />
+                  <Text strong>Header Replica</Text>
+                </Space>
+              }
+              extra="at least 1 header replica is required"
+            >
+              <InputNumber value={1} disabled style={{ width: '100%', color: '#999' }} />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
             <Form.Item
               label={
                 <Space>
@@ -246,12 +259,12 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
               <InputNumber min={0} max={100} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col span={6}>
             <Form.Item
               label={
                 <Space>
                   <SettingOutlined />
-                  <Text strong>GPU Per Node</Text>
+                  <Text strong>GPUs Per Node</Text>
                 </Space>
               }
               name="gpuPerNode"
@@ -260,7 +273,7 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
               <InputNumber min={1} max={8} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col span={6}>
             <Form.Item
               label={
                 <Space>

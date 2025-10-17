@@ -230,12 +230,26 @@ const TrainingConfigPanel = ({ onLaunch, deploymentStatus }) => {
 
         {/* 资源配置 */}
         <Row gutter={16}>
-          <Col span={12}>
+          <Col span={8}>
             <Form.Item
               label={
                 <Space>
                   <SettingOutlined />
-                  <Text strong>Num Proc Per Node</Text>
+                  <Text strong>EFA Count</Text>
+                </Space>
+              }
+              name="efaCount"
+              rules={[{ required: true, message: 'Please input EFA count!' }]}
+            >
+              <InputNumber min={0} max={32} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item
+              label={
+                <Space>
+                  <SettingOutlined />
+                  <Text strong>GPUs Per Node</Text>
                 </Space>
               }
               name="nprocPerNode"
@@ -244,7 +258,7 @@ const TrainingConfigPanel = ({ onLaunch, deploymentStatus }) => {
               <InputNumber min={1} max={64} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col span={8}>
             <Form.Item
               label={
                 <Space>
@@ -260,52 +274,40 @@ const TrainingConfigPanel = ({ onLaunch, deploymentStatus }) => {
           </Col>
         </Row>
 
+        {/* LlamaFactory配置 */}
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item
               label={
                 <Space>
-                  <SettingOutlined />
-                  <Text strong>EFA Count</Text>
+                  <CodeOutlined />
+                  <Text strong>LlamaFactory Recipe Run Path</Text>
                 </Space>
               }
-              name="efaCount"
-              rules={[{ required: true, message: 'Please input EFA count!' }]}
+              name="lmfRecipeRunPath"
+              rules={[{ required: true, message: 'Please input LlamaFactory recipe run path!' }]}
             >
-              <InputNumber min={0} max={32} style={{ width: '100%' }} />
+              <Input placeholder="/s3/training_code/model-training-with-hyperpod-training-operator/llama-factory-project/" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              label={
+                <Space>
+                  <CodeOutlined />
+                  <Text strong>LlamaFactory Config YAML File Name</Text>
+                </Space>
+              }
+              name="lmfRecipeYamlFile"
+              rules={[
+                { required: true, message: 'Please input YAML file name!' },
+                { pattern: /\.yaml$/, message: 'File must have .yaml extension' }
+              ]}
+            >
+              <Input placeholder="qwen06b_full_sft_template.yaml" />
             </Form.Item>
           </Col>
         </Row>
-
-        {/* LlamaFactory配置 */}
-        <Form.Item
-          label={
-            <Space>
-              <CodeOutlined />
-              <Text strong>LlamaFactory Recipe Run Path</Text>
-            </Space>
-          }
-          name="lmfRecipeRunPath"
-          rules={[{ required: true, message: 'Please input LlamaFactory recipe run path!' }]}
-        >
-          <Input placeholder="/s3/training_code/model-training-with-hyperpod-training-operator/llama-factory-project/" />
-        </Form.Item>
-
-        <Form.Item
-          label={
-            <Space>
-              <CodeOutlined />
-              <Text strong>LlamaFactory Config YAML File Name</Text>
-            </Space>
-          }
-          name="lmfRecipeYamlFile"
-          rules={[
-            { required: true, message: 'Please input YAML file name!' },
-            { pattern: /\.yaml$/, message: 'File must have .yaml extension' }
-          ]}
-        >
-          <Input placeholder="qwen06b_full_sft_template.yaml" />
-        </Form.Item>
 
         {/* MLFlow配置 */}
         <Form.Item

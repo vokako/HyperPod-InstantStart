@@ -361,7 +361,14 @@ const EksClusterCreationPanel = () => {
                   >
                     Create Cluster
                   </Button>
-                  <Button onClick={() => form.resetFields()}>
+                  <Button onClick={() => {
+                    form.resetFields();
+                    // 重新设置默认值
+                    form.setFieldsValue({
+                      clusterTag: generateClusterTag()
+                    });
+                    fetchCurrentRegion();
+                  }}>
                     Reset
                   </Button>
                 </Space>

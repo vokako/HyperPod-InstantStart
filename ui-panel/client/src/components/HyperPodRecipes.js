@@ -16,7 +16,8 @@ import SageMakerJobPanel from './SageMakerJobPanel';
 const { TabPane } = Tabs;
 
 const HyperPodRecipes = ({ onLaunch, deploymentStatus }) => {
-  const [activeTab, setActiveTab] = useState('script');
+  const [activeTab, setActiveTab] = useState('torch');
+  const showScriptRecipe = process.env.REACT_APP_SHOW_SCRIPT_RECIPE === 'true';
 
   const handleTabChange = (key) => {
     setActiveTab(key);
@@ -32,23 +33,25 @@ const HyperPodRecipes = ({ onLaunch, deploymentStatus }) => {
         tabBarStyle={{ marginBottom: 16, flexShrink: 0 }}
         style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
       >
-        <TabPane
-          tab={
-            <Space>
-              <CodeOutlined />
-              Script Recipe
-            </Space>
-          }
-          key="script"
-          style={{ height: '100%', overflow: 'hidden' }}
-        >
-          <div style={{ height: '100%', overflow: 'auto', paddingRight: '8px' }}>
-            <ScriptRecipePanel 
-              onLaunch={onLaunch}
-              deploymentStatus={deploymentStatus}
-            />
-          </div>
-        </TabPane>
+        {showScriptRecipe && (
+          <TabPane
+            tab={
+              <Space>
+                <CodeOutlined />
+                Script Recipe
+              </Space>
+            }
+            key="script"
+            style={{ height: '100%', overflow: 'hidden' }}
+          >
+            <div style={{ height: '100%', overflow: 'auto', paddingRight: '8px' }}>
+              <ScriptRecipePanel 
+                onLaunch={onLaunch}
+                deploymentStatus={deploymentStatus}
+              />
+            </div>
+          </TabPane>
+        )}
 
         <TabPane
           tab={
