@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, message, Tag, Space, Modal, InputNumber, Form, Select, Input, Typography, AutoComplete } from 'antd';
-import { ReloadOutlined, EditOutlined, ToolOutlined, PlusOutlined } from '@ant-design/icons';
+import { ReloadOutlined, EditOutlined, ToolOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import globalRefreshManager from '../hooks/useGlobalRefresh';
 import operationRefreshManager from '../hooks/useOperationRefresh';
 import EksNodeGroupCreationPanel from './EksNodeGroupCreationPanel';
@@ -10,6 +10,8 @@ const { Text } = Typography;
 const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDependencyStatusChange, onRefreshClusterDetails, refreshTrigger, cluster }) => {
   const [loading, setLoading] = useState(false);
   const [scaleLoading, setScaleLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [addInstanceGroupLoading, setAddInstanceGroupLoading] = useState(false);
   const [eksNodeGroups, setEksNodeGroups] = useState([]);
   const [hyperPodGroups, setHyperPodGroups] = useState([]);
   const [hyperPodCreationStatus, setHyperPodCreationStatus] = useState(null);
@@ -132,11 +134,8 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
 
   const handleAddInstanceGroup = async () => {
     try {
+      setAddInstanceGroupLoading(true);
       const values = await instanceGroupForm.validateFields();
-      
-      // 立即关闭Modal
-      setAddInstanceGroupModalVisible(false);
-      instanceGroupForm.resetFields();
       
       const response = await fetch('/api/cluster/hyperpod/add-instance-group', {
         method: 'POST',
@@ -147,14 +146,20 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
       const result = await response.json();
       
       if (!response.ok) {
-        message.error(`Failed to add instance group: ${result.error}`);
+        message.error(`Failed to add instance group: ${result.error || result.message || 'Unknown error'}`);
       } else {
         message.success('Instance group addition initiated successfully');
+        // 成功后关闭Modal并重置表单
+        setAddInstanceGroupModalVisible(false);
+        instanceGroupForm.resetFields();
         // 刷新数据
         await fetchNodeGroups();
       }
     } catch (error) {
-      message.error(`Error adding instance group: ${error.message}`);
+      console.error('Error adding instance group:', error);
+      message.error(`Error adding instance group: ${error.message || 'Unknown error'}`);
+    } finally {
+      setAddInstanceGroupLoading(false);
     }
   };
 
@@ -349,6 +354,39 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
     }
   };
 
+  const handleDeleteInstanceGroup = async (record) => {
+    Modal.confirm({
+      title: 'Delete Instance Group',
+      content: `Are you sure you want to delete instance group "${record.name}"? This action cannot be undone.`,
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          setDeleteLoading(true);
+          const response = await fetch('/api/cluster/hyperpod/delete-instance-group', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instanceGroupName: record.name })
+          });
+
+          if (response.ok) {
+            message.success(`Instance group "${record.name}" deletion initiated successfully`);
+            await fetchNodeGroups();
+          } else {
+            const error = await response.json();
+            message.error(`Failed to delete instance group: ${error.error || error.message || 'Unknown error'}`);
+          }
+        } catch (error) {
+          console.error('Error deleting instance group:', error);
+          message.error(`Error deleting instance group: ${error.message || 'Unknown error'}`);
+        } finally {
+          setDeleteLoading(false);
+        }
+      }
+    });
+  };
+
   const handleUpdateSoftware = async (record) => {
     try {
       const response = await fetch('/api/cluster/hyperpod/update-software', {
@@ -390,6 +428,15 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
         onClick={() => handleScale(record, 'hyperpod')}
       >
         Scale
+      </Button>
+      <Button 
+        size="small" 
+        icon={<DeleteOutlined />}
+        danger
+        loading={deleteLoading}
+        onClick={() => handleDeleteInstanceGroup(record)}
+      >
+        Delete
       </Button>
     </Space>
   );
@@ -477,8 +524,10 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
                 !effectiveDependenciesConfigured ||   // 依赖未配置时禁用
                 !!hyperPodCreationStatus ||  // 创建中时禁用
                 !!hyperPodDeletionStatus ||  // 删除中时禁用
-                hyperPodGroups.length === 0    // 没有HyperPod时禁用
+                hyperPodGroups.length === 0 ||   // 没有HyperPod时禁用
+                addInstanceGroupLoading      // 添加中时禁用
               }
+              loading={addInstanceGroupLoading}
               title={
                 !effectiveDependenciesConfigured 
                   ? "Dependencies must be configured first"
@@ -488,7 +537,9 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
                       ? "HyperPod deletion in progress"
                       : hyperPodGroups.length === 0 
                         ? "No HyperPod cluster exists"
-                        : "Add instance group to existing HyperPod cluster"
+                        : addInstanceGroupLoading
+                          ? "Adding instance group..."
+                          : "Add instance group to existing HyperPod cluster"
               }
             >
               Add Instance Group
@@ -784,10 +835,13 @@ const NodeGroupManager = ({ dependenciesConfigured = false, activeCluster, onDep
         open={addInstanceGroupModalVisible}
         onOk={handleAddInstanceGroup}
         onCancel={() => {
+          if (addInstanceGroupLoading) return; // 防止loading时关闭
           setAddInstanceGroupModalVisible(false);
           instanceGroupForm.resetFields();
         }}
         okText="Add Instance Group"
+        confirmLoading={addInstanceGroupLoading}
+        cancelButtonProps={{ disabled: addInstanceGroupLoading }}
         width={700}
       >
         <Form form={instanceGroupForm} layout="vertical">

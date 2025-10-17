@@ -5019,6 +5019,80 @@ app.post('/api/cluster/hyperpod/add-instance-group', async (req, res) => {
   }
 });
 
+// 删除HyperPod集群的实例组
+app.post('/api/cluster/hyperpod/delete-instance-group', async (req, res) => {
+  try {
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    const fs = require('fs');
+    const path = require('path');
+    
+    const { instanceGroupName } = req.body;
+    const ClusterManager = require('./cluster-manager');
+    const clusterManager = new ClusterManager();
+    const activeClusterName = clusterManager.getActiveCluster();
+    
+    if (!activeClusterName) {
+      return res.status(400).json({ error: 'No active cluster found' });
+    }
+
+    if (!instanceGroupName) {
+      return res.status(400).json({ error: 'Instance group name is required' });
+    }
+
+    // 读取集群配置文件
+    const configDir = clusterManager.getClusterConfigDir(activeClusterName);
+    const initEnvsPath = path.join(configDir, 'init_envs');
+    
+    if (!fs.existsSync(initEnvsPath)) {
+      return res.status(400).json({ error: 'Cluster configuration not found' });
+    }
+
+    // 解析环境变量
+    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
+    const awsRegionMatch = envContent.match(/export AWS_REGION=(.+)/);
+    const region = awsRegionMatch ? awsRegionMatch[1] : 'us-west-2';
+
+    // 从metadata中获取HyperPod集群信息
+    const metadataDir = clusterManager.getClusterMetadataDir(activeClusterName);
+    const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+    
+    if (!fs.existsSync(clusterInfoPath)) {
+      return res.status(400).json({ error: 'Cluster metadata not found' });
+    }
+
+    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+    const userCreatedClusters = clusterInfo.hyperPodClusters?.userCreated || [];
+    const detectedClusters = clusterInfo.hyperPodClusters?.detected || [];
+    const allClusters = [...userCreatedClusters, ...detectedClusters];
+
+    if (allClusters.length === 0) {
+      return res.status(400).json({ error: 'No HyperPod cluster found' });
+    }
+
+    // 使用第一个HyperPod集群
+    const hyperPodCluster = allClusters[0];
+    
+    console.log(`Deleting instance group "${instanceGroupName}" from cluster "${hyperPodCluster.name}"`);
+
+    // 调用AWS CLI删除实例组
+    const deleteCmd = `aws sagemaker update-cluster --cluster-name ${hyperPodCluster.name} --instance-groups-to-delete ${instanceGroupName} --region ${region}`;
+    const deleteResult = await execAsync(deleteCmd);
+
+    console.log('Instance group deletion result:', deleteResult.stdout);
+
+    res.json({ 
+      success: true, 
+      message: `Instance group "${instanceGroupName}" deletion initiated successfully`
+    });
+
+  } catch (error) {
+    console.error('Error deleting instance group:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 console.log('Multi-cluster management APIs loaded');
 
 // 引入CIDR生成工具
