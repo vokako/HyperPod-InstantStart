@@ -199,7 +199,8 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
         deployAsPool: false,
         deploymentName: '',
         dockerImage: '', // 改为空，用户必须选择
-        vllmCommand: '' // 命令也为空，等待用户选择镜像后自动填充
+        vllmCommand: '', // 命令也为空，等待用户选择镜像后自动填充
+        port: 8000 // 添加端口默认值
       }}
     >
       <Row gutter={16}>
@@ -301,35 +302,54 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
         </Col>
       </Row>
 
-      <Form.Item
-        label={
-          <Space>
-            <DockerOutlined />
-            Docker Image
-            <Tooltip title="选择预设镜像或输入自定义镜像地址">
-              <InfoCircleOutlined />
-            </Tooltip>
-          </Space>
-        }
-        name="dockerImage"
-        rules={[{ required: true, message: 'Please select or input docker image!' }]}
-      >
-        <AutoComplete
-          options={dockerImageOptions}
-          placeholder="请先选择Docker镜像以自动生成命令"
-          style={{ fontFamily: 'monospace' }}
-          onChange={handleDockerImageChange}
-          filterOption={false}
-          allowClear
-        />
-      </Form.Item>
+      <Row gutter={16}>
+        <Col span={18}>
+          <Form.Item
+            label={
+              <Space>
+                <DockerOutlined />
+                Docker Image
+                <Tooltip title="Select preset image or input custom image address">
+                  <InfoCircleOutlined />
+                </Tooltip>
+              </Space>
+            }
+            name="dockerImage"
+            rules={[{ required: true, message: 'Please select or input docker image!' }]}
+          >
+            <AutoComplete
+              options={dockerImageOptions}
+              placeholder="Select Docker image to auto-generate command"
+              style={{ fontFamily: 'monospace' }}
+              onChange={handleDockerImageChange}
+              filterOption={false}
+              allowClear
+            />
+          </Form.Item>
+        </Col>
+        <Col span={6}>
+          <Form.Item
+            label={
+              <Space>
+                <GlobalOutlined />
+                Port
+              </Space>
+            }
+            name="port"
+            initialValue={8000}
+            rules={[{ required: true, message: 'Please input port!' }]}
+          >
+            <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+          </Form.Item>
+        </Col>
+      </Row>
 
       <Form.Item
         label={
           <Space>
             <CodeOutlined />
             EntryPoint Command
-            <Tooltip title="任意EntryPoint及参数，如python3 -m project.main --model HuggingfaceID">
+            <Tooltip title="Any EntryPoint and parameters, e.g. python3 -m project.main --model HuggingfaceID">
               <InfoCircleOutlined />
             </Tooltip>
           </Space>
@@ -339,20 +359,20 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
       >
         <TextArea
           rows={8}
-          placeholder="请先选择Docker镜像，将自动生成对应的默认命令"
+          placeholder="Select Docker image first, default command will be auto-generated"
           style={{ fontFamily: 'monospace', fontSize: '12px' }}
         />
       </Form.Item>
 
       <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f0f9ff', borderRadius: 6 }}>
         <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: 8 }}>
-          <strong>容器部署说明：</strong>
+          <strong>Container Deployment Instructions:</strong>
         </div>
         <div style={{ fontSize: '11px', color: '#0c4a6e' }}>
-          • 支持任意EntryPoint及参数，如python3 -m project.main --model HuggingfaceID<br/>
-          • 支持vLLM、SGLang及任意自定义容器<br/>
-          • 每个模型副本/Replica的GPU数量需要与参数中的数量一致，如tp/pp等参数<br/>
-          • 确保命令在容器环境中可执行
+          • Supports any EntryPoint and parameters, e.g. python3 -m project.main --model HuggingfaceID<br/>
+          • Supports vLLM, SGLang and any custom containers<br/>
+          • GPU count per model replica must match parameters like tp/pp<br/>
+          • Ensure commands are executable in container environment
         </div>
       </div>
 

@@ -479,7 +479,7 @@ const TestPanel = ({ services, onRefresh }) => {
         >
           <Input 
             placeholder="/api/generate"
-            addonBefore="Base URL"
+            addonBefore="API"
           />
         </Form.Item>
 
@@ -514,38 +514,38 @@ const TestPanel = ({ services, onRefresh }) => {
 
         <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f6f8fa', borderRadius: 6 }}>
           <div style={{ fontSize: '12px', color: '#666', marginBottom: 8 }}>
-            <strong>{modelType.toUpperCase()} API示例：</strong>
+            <strong>API Examples:</strong>
           </div>
           <div style={{ fontSize: '11px', color: '#888', fontFamily: 'monospace' }}>
             {modelType === 'vllm' ? (
               <>
-                /v1/chat/completions - 对话API (OpenAI兼容)<br/>
-                /v1/completions - 文本补全API<br/>
-                /v1/models - 模型列表 (GET请求)<br/>
-                /health - 健康检查<br/>
+                /v1/chat/completions - Chat API (OpenAI Compatible)<br/>
+                /v1/completions - Text Completion API<br/>
+                /v1/models - Model List (GET Request)<br/>
+                /health - Health Check<br/>
                 <Text style={{ color: '#0066cc', fontSize: '11px' }}>
-                  当前模型: {fetchingModelId ? '获取中...' : '请查看JSON payload中的model字段'}
+                  Current Model: {fetchingModelId ? 'Fetching...' : 'Check model field in JSON payload'}
                 </Text>
               </>
             ) : modelType === 'sglang' ? (
               <>
-                /v1/chat/completions - 对话API (OpenAI兼容)<br/>
-                /v1/completions - 文本补全API<br/>
-                /v1/models - 模型列表 (GET请求)<br/>
-                /health - 健康检查<br/>
+                /v1/chat/completions - Chat API (OpenAI Compatible)<br/>
+                /v1/completions - Text Completion API<br/>
+                /v1/models - Model List (GET Request)<br/>
+                /health - Health Check<br/>
                 <Text style={{ color: '#0066cc', fontSize: '11px' }}>
-                  当前模型: {fetchingModelId ? '获取中...' : '请查看JSON payload中的model字段'}
+                  Current Model: {fetchingModelId ? 'Fetching...' : 'Check model field in JSON payload'}
                 </Text>
               </>
             ) : (
               <>
-                /v1/chat/completions - 对话API (OpenAI兼容)<br/>
-                /api/generate - Prompt文本生成<br/>
-                /api/chat - 对话API<br/>
-                /api/tags - 模型列表 (GET请求，payload为空)<br/>
-                / - 健康检查<br/>
+                /v1/chat/completions - Chat API (OpenAI Compatible)<br/>
+                /api/generate - Prompt Text Generation<br/>
+                /api/chat - Chat API<br/>
+                /api/tags - Model List (GET Request, empty payload)<br/>
+                / - Health Check<br/>
                 <Text style={{ color: '#0066cc', fontSize: '11px' }}>
-                  当前模型: {fetchingModelId ? '获取中...' : '请查看JSON payload中的model字段'}
+                  Current Model: {fetchingModelId ? 'Fetching...' : 'Check model field in JSON payload'}
                 </Text>
               </>
             )}
@@ -688,10 +688,10 @@ const TestPanel = ({ services, onRefresh }) => {
               {fetchingModelId ? (
                 <Text type="secondary">
                   <Spin size="small" style={{ marginRight: 8 }} />
-                  获取中...
+                  Fetching...
                 </Text>
               ) : (
-                <Text type="secondary">请查看JSON payload中的model字段</Text>
+                <Text type="secondary">Check model field in JSON payload</Text>
               )}
             </div>
             <div>

@@ -210,7 +210,7 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
           }
           name="entryPointPath"
           rules={[{ required: true, message: 'Please input entry point path!' }]}
-          extra="Path relative to /s3/train-recipes/"
+          extra="Relative Path under /s3/train-recipes/"
         >
           <Input placeholder="verl-project/src/qwen-3b-grpo-kuberay.sh" />
         </Form.Item>
@@ -231,7 +231,20 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
 
         {/* 资源配置 */}
         <Row gutter={16}>
-          <Col span={8}>
+          <Col span={6}>
+            <Form.Item
+              label={
+                <Space>
+                  <ThunderboltOutlined />
+                  <Text strong>Header Replica</Text>
+                </Space>
+              }
+              extra="at least 1 header replica is required"
+            >
+              <InputNumber value={1} disabled style={{ width: '100%', color: '#999' }} />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
             <Form.Item
               label={
                 <Space>
@@ -246,7 +259,7 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
               <InputNumber min={0} max={100} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col span={6}>
             <Form.Item
               label={
                 <Space>
@@ -260,7 +273,7 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus }) => {
               <InputNumber min={1} max={8} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col span={6}>
             <Form.Item
               label={
                 <Space>
