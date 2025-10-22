@@ -58,6 +58,9 @@ class ClusterStatusV2 {
                         node.metadata?.labels?.['beta.kubernetes.io/instance-type'] ||
                         'Unknown';
     
+    // 获取节点标签信息用于分类
+    const labels = node.metadata?.labels || {};
+    
     try {
       // 并行获取节点信息，使用更高效的查询
       const [capacityInfo, allocatableInfo, podsInfo] = await Promise.all([
@@ -130,6 +133,7 @@ class ClusterStatusV2 {
       return {
         nodeName,
         instanceType,
+        labels, // 添加标签信息
         totalGPU,
         usedGPU,
         availableGPU: Math.max(0, allocatableGPU - usedGPU),
@@ -143,6 +147,7 @@ class ClusterStatusV2 {
       return {
         nodeName,
         instanceType: 'Unknown',
+        labels, // 添加标签信息
         totalGPU: 0,
         usedGPU: 0,
         availableGPU: 0,

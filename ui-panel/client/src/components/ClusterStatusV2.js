@@ -158,6 +158,77 @@ const ClusterStatusV2 = ({ clusterData = [], onRefresh }) => {
       ),
     },
     {
+      title: 'Node Type',
+      key: 'nodeType',
+      render: (_, record) => {
+        // 根据节点标签判断类型
+        const getNodeTypeInfo = (labels = {}) => {
+          // HyperPod节点
+          if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod') {
+            const instanceGroup = labels['sagemaker.amazonaws.com/instance-group-name'] || 'unknown';
+            return {
+              type: 'HyperPod',
+              color: '#722ed1',
+              details: [
+                `Group: ${instanceGroup}`,
+                'SageMaker HyperPod'
+              ]
+            };
+          }
+          
+          // EC2 Karpenter节点
+          if (labels['karpenter.sh/nodepool']) {
+            const capacityType = labels['karpenter.sh/capacity-type'] || 'unknown';
+            const ec2NodePool = labels['karpenter.sh/nodepool'];
+            return {
+              type: 'EC2 Karpenter',
+              color: '#52c41a',
+              details: [
+                `Pool: ${ec2NodePool}`,
+                `Type: ${capacityType === 'spot' ? 'Spot' : 'On-Demand'}`
+              ]
+            };
+          }
+          
+          // EKS NodeGroup节点
+          if (labels['eks.amazonaws.com/nodegroup']) {
+            const nodegroup = labels['eks.amazonaws.com/nodegroup'];
+            const capacityType = labels['eks.amazonaws.com/capacityType'] || 'ON_DEMAND';
+            return {
+              type: 'EKS NodeGroup',
+              color: '#1890ff',
+              details: [
+                `Group: ${nodegroup}`,
+                `Type: ${capacityType === 'SPOT' ? 'Spot' : 'On-Demand'}`
+              ]
+            };
+          }
+          
+          // 未知类型
+          return {
+            type: 'Unknown',
+            color: '#8c8c8c',
+            details: ['Unclassified Node']
+          };
+        };
+        
+        const nodeTypeInfo = getNodeTypeInfo(record.labels || {});
+        
+        return (
+          <div>
+            <Tag color={nodeTypeInfo.color} style={{ marginBottom: 4 }}>
+              {nodeTypeInfo.type}
+            </Tag>
+            {nodeTypeInfo.details.map((detail, index) => (
+              <div key={index} style={{ fontSize: '11px', color: '#666' }}>
+                {detail}
+              </div>
+            ))}
+          </div>
+        );
+      },
+    },
+    {
       title: 'GPU Usage',
       key: 'gpuUsage',
       render: (_, record) => {
