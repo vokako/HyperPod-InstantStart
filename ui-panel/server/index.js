@@ -2163,10 +2163,10 @@ app.get('/api/rayjobs', async (req, res) => {
   try {
     const output = await executeKubectl('get rayjobs -o json');
     const rayjobs = JSON.parse(output);
-    res.json(rayjobs.items);
+    res.json(rayjobs.items || []);
   } catch (error) {
     console.error('RayJobs fetch error:', error);
-    res.status(500).json({ error: error.message });
+    res.json([]); // 返回空数组而不是错误对象
   }
 });
 
