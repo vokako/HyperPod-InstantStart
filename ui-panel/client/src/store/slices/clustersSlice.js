@@ -14,6 +14,21 @@ export const fetchClusters = createAsyncThunk(
   }
 );
 
+// 异步操作：获取集群详情
+export const fetchClusterDetails = createAsyncThunk(
+  'clusters/fetchClusterDetails',
+  async (clusterTag, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`/api/cluster/info${clusterTag ? `?clusterTag=${clusterTag}` : ''}`);
+      if (!response.ok) throw new Error('Failed to fetch cluster details');
+      const result = await response.json();
+      return result.success ? result : result;
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
 // 异步操作：切换活跃集群
 export const switchCluster = createAsyncThunk(
   'clusters/switchCluster',
@@ -113,12 +128,26 @@ const clustersSlice = createSlice({
         state.error = null;
       })
       .addCase(fetchClusters.fulfilled, (state, action) => {
-        state.list = action.payload;
+        state.list = action.payload.clusters || action.payload;
+        // 如果 API 返回了 activeCluster，则设置它
+        if (action.payload.activeCluster) {
+          state.activeCluster = action.payload.activeCluster;
+          // 清除之前的集群详情，让组件重新获取
+          state.clusterDetails = null;
+        }
         state.loading = false;
       })
       .addCase(fetchClusters.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
+      })
+
+    // 处理获取集群详情
+      .addCase(fetchClusterDetails.fulfilled, (state, action) => {
+        state.clusterDetails = action.payload;
+      })
+      .addCase(fetchClusterDetails.rejected, (state, action) => {
+        console.error('Failed to fetch cluster details:', action.payload);
       })
 
     // 处理切换活跃集群

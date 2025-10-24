@@ -63,3 +63,179 @@ export const selectJobLogs = state => state.training.jobLogs;
 
 // 选择特定作业的日志
 export const selectJobLogsByName = (state, jobName) => state.training.jobLogs[jobName] || [];
+
+// 集群状态相关选择器
+export const selectClusterNodes = state => state.clusterStatus?.nodes || [];
+export const selectPendingGPUs = state => state.clusterStatus?.pendingGPUs || 0;
+export const selectClusterStatusLoading = state => state.clusterStatus?.loading || false;
+export const selectClusterStatusError = state => state.clusterStatus?.error;
+export const selectClusterLastUpdate = state => state.clusterStatus?.lastUpdate;
+export const selectClusterStats = state => state.clusterStatus?.stats;
+
+// 计算集群统计信息的选择器
+export const selectCalculatedClusterStats = state => {
+  const nodes = selectClusterNodes(state);
+  const pendingGPUs = selectPendingGPUs(state);
+
+  const stats = nodes.reduce((acc, node) => ({
+    totalNodes: acc.totalNodes + 1,
+    readyNodes: acc.readyNodes + (node.nodeReady ? 1 : 0),
+    totalGPUs: acc.totalGPUs + (node.totalGPU || 0),
+    usedGPUs: acc.usedGPUs + (node.usedGPU || 0),
+    availableGPUs: acc.availableGPUs + (node.availableGPU || 0),
+    allocatableGPUs: acc.allocatableGPUs + (node.allocatableGPU || 0),
+    errorNodes: acc.errorNodes + (node.error ? 1 : 0)
+  }), {
+    totalNodes: 0,
+    readyNodes: 0,
+    totalGPUs: 0,
+    usedGPUs: 0,
+    availableGPUs: 0,
+    allocatableGPUs: 0,
+    errorNodes: 0
+  });
+
+  return {
+    ...stats,
+    pendingGPUs
+  };
+};
+
+// 应用状态相关选择器
+export const selectAppPods = state => state.appStatus?.pods || [];
+export const selectAppServices = state => state.appStatus?.services || [];
+export const selectAppRayJobs = state => state.appStatus?.rayJobs || [];
+export const selectAppBusinessServices = state => state.appStatus?.businessServices || [];
+export const selectAppStatusLoading = state => state.appStatus?.loading || false;
+export const selectAppStatusError = state => state.appStatus?.error;
+export const selectAppLastUpdate = state => state.appStatus?.lastUpdate;
+export const selectAppStats = state => state.appStatus?.stats;
+
+// 分别获取各个组件的加载状态
+export const selectPodsLoading = state => state.appStatus?.podsLoading || false;
+export const selectServicesLoading = state => state.appStatus?.servicesLoading || false;
+export const selectRayJobsLoading = state => state.appStatus?.rayJobsLoading || false;
+export const selectBusinessServicesLoading = state => state.appStatus?.businessServicesLoading || false;
+
+// 分别获取各个组件的错误状态
+export const selectPodsError = state => state.appStatus?.podsError;
+export const selectServicesError = state => state.appStatus?.servicesError;
+export const selectRayJobsError = state => state.appStatus?.rayJobsError;
+export const selectBusinessServicesError = state => state.appStatus?.businessServicesError;
+
+// 分别获取各个组件的更新时间
+export const selectPodsLastUpdate = state => state.appStatus?.lastPodsUpdate;
+export const selectServicesLastUpdate = state => state.appStatus?.lastServicesUpdate;
+export const selectRayJobsLastUpdate = state => state.appStatus?.lastRayJobsUpdate;
+export const selectBusinessServicesLastUpdate = state => state.appStatus?.lastBusinessServicesUpdate;
+
+// 计算应用健康度的选择器
+export const selectAppHealthSummary = state => {
+  const stats = selectAppStats(state);
+  if (!stats) return { overall: 'unknown', details: {} };
+
+  const podHealth = stats.totalPods > 0 ?
+    (stats.runningPods / stats.totalPods) * 100 : 100;
+
+  const serviceHealth = stats.totalServices > 0 ?
+    (stats.activeServices / stats.totalServices) * 100 : 100;
+
+  const rayJobHealth = stats.totalRayJobs > 0 ?
+    ((stats.runningRayJobs + stats.completedRayJobs) / stats.totalRayJobs) * 100 : 100;
+
+  const businessServiceHealth = stats.totalBusinessServices > 0 ?
+    (stats.healthyBusinessServices / stats.totalBusinessServices) * 100 : 100;
+
+  const overallHealth = (podHealth + serviceHealth + rayJobHealth + businessServiceHealth) / 4;
+
+  let healthLevel = 'healthy';
+  if (overallHealth < 50) healthLevel = 'critical';
+  else if (overallHealth < 75) healthLevel = 'warning';
+  else if (overallHealth < 90) healthLevel = 'good';
+
+  return {
+    overall: healthLevel,
+    percentage: Math.round(overallHealth),
+    details: {
+      pods: Math.round(podHealth),
+      services: Math.round(serviceHealth),
+      rayJobs: Math.round(rayJobHealth),
+      businessServices: Math.round(businessServiceHealth)
+    }
+  };
+};
+
+// 选择特定类型的 Pod
+export const selectPodsByStatus = (state, status) => {
+  const pods = selectAppPods(state);
+  return pods.filter(pod => pod.status?.phase === status);
+};
+
+// 选择特定类型的 RayJob
+export const selectRayJobsByStatus = (state, status) => {
+  const rayJobs = selectAppRayJobs(state);
+  return rayJobs.filter(job => job.status?.jobStatus === status);
+};
+
+// 全局刷新相关选择器
+export const selectIsGlobalRefreshing = state => state.globalRefresh?.isRefreshing || false;
+export const selectLastGlobalRefreshTime = state => state.globalRefresh?.lastRefreshTime;
+export const selectAutoRefreshEnabled = state => state.globalRefresh?.autoRefreshEnabled || false;
+export const selectAutoRefreshInterval = state => state.globalRefresh?.autoRefreshInterval || 60000;
+export const selectGlobalRefreshStats = state => state.globalRefresh?.stats;
+export const selectGlobalRefreshHistory = state => state.globalRefresh?.refreshHistory || [];
+export const selectGlobalRefreshError = state => state.globalRefresh?.error;
+
+// 获取最近的刷新记录
+export const selectRecentRefreshHistory = (state, limit = 10) => {
+  const history = selectGlobalRefreshHistory(state);
+  return history.slice(0, limit);
+};
+
+// 计算全局系统健康度
+export const selectOverallSystemHealth = state => {
+  const clusterStats = selectCalculatedClusterStats(state);
+  const appHealth = selectAppHealthSummary(state);
+  const refreshStats = selectGlobalRefreshStats(state);
+
+  if (!clusterStats || !appHealth.overall || !refreshStats) {
+    return { overall: 'unknown', score: 0, components: {} };
+  }
+
+  // 计算集群健康度
+  const clusterHealthScore = clusterStats.totalNodes > 0 ?
+    (clusterStats.readyNodes / clusterStats.totalNodes) * 100 : 0;
+
+  // 应用健康度得分
+  const appHealthScore = appHealth.percentage || 0;
+
+  // 刷新系统健康度（基于成功率）
+  const refreshHealthScore = refreshStats.successRate || 0;
+
+  // 综合得分
+  const overallScore = (clusterHealthScore + appHealthScore + refreshHealthScore) / 3;
+
+  let healthLevel = 'critical';
+  if (overallScore >= 90) healthLevel = 'healthy';
+  else if (overallScore >= 75) healthLevel = 'good';
+  else if (overallScore >= 50) healthLevel = 'warning';
+
+  return {
+    overall: healthLevel,
+    score: Math.round(overallScore),
+    components: {
+      cluster: {
+        score: Math.round(clusterHealthScore),
+        status: clusterHealthScore >= 80 ? 'good' : clusterHealthScore >= 50 ? 'warning' : 'critical'
+      },
+      applications: {
+        score: appHealthScore,
+        status: appHealth.overall
+      },
+      refresh: {
+        score: refreshHealthScore,
+        status: refreshHealthScore >= 90 ? 'good' : refreshHealthScore >= 70 ? 'warning' : 'critical'
+      }
+    }
+  };
+};

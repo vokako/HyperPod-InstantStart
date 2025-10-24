@@ -55,16 +55,24 @@ export const deployService = createAsyncThunk(
 // 异步操作：取消部署
 export const undeployModel = createAsyncThunk(
   'inference/undeployModel',
-  async (deploymentName, { rejectWithValue }) => {
+  async (modelTag, { rejectWithValue }) => {
     try {
       const response = await fetch('/api/undeploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: deploymentName }),
+        body: JSON.stringify({
+          modelTag,
+          deleteType: 'all'
+        }),
       });
 
-      if (!response.ok) throw new Error('Failed to undeploy model');
-      return { name: deploymentName, ...await response.json() };
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to undeploy model');
+      }
+
+      return { name: modelTag, ...result };
     } catch (error) {
       return rejectWithValue(error.message);
     }

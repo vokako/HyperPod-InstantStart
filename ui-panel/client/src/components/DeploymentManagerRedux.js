@@ -89,9 +89,10 @@ const DeploymentManagerRedux = () => {
 
     try {
       await dispatch(undeployModel(modelTag)).unwrap();
-      message.success(`Undeploying ${modelTag}`);
+      message.success(`Successfully initiated undeploy for ${modelTag}`);
     } catch (error) {
-      message.error(`Failed to undeploy: ${error}`);
+      console.error('Undeploy error:', error);
+      message.error(`Failed to undeploy model: ${error || 'Unknown error'}`);
       setDeleteLoading(prev => ({ ...prev, [modelTag]: false }));
     }
   };

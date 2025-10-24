@@ -3,6 +3,9 @@ import clustersReducer from './slices/clustersSlice';
 import nodeGroupsReducer from './slices/nodeGroupsSlice';
 import inferenceReducer from './slices/inferenceSlice';
 import trainingReducer from './slices/trainingSlice';
+import clusterStatusReducer from './slices/clusterStatusSlice';
+import appStatusReducer from './slices/appStatusSlice';
+import globalRefreshReducer from './slices/globalRefreshSlice';
 
 // 定义 Redux store 配置
 export const store = configureStore({
@@ -11,6 +14,9 @@ export const store = configureStore({
     nodeGroups: nodeGroupsReducer,
     inference: inferenceReducer,
     training: trainingReducer,
+    clusterStatus: clusterStatusReducer,
+    appStatus: appStatusReducer,
+    globalRefresh: globalRefreshReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

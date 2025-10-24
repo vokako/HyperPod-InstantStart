@@ -37,6 +37,7 @@ import EksClusterCreationPanel from './EksClusterCreationPanel';
 import CreateClusterDeprecated from './CreateClusterDeprecated';
 import {
   fetchClusters,
+  fetchClusterDetails,
   switchCluster as switchClusterAction,
   checkDependenciesStatus,
   configureDependencies
@@ -385,8 +386,12 @@ const ClusterManagementRedux = () => {
   useEffect(() => {
     if (activeCluster) {
       dispatch(checkDependenciesStatus(activeCluster));
+      // 如果没有集群详情，获取集群详情
+      if (!clusterDetails) {
+        dispatch(fetchClusterDetails(activeCluster));
+      }
     }
-  }, [activeCluster, dispatch]);
+  }, [activeCluster, clusterDetails, dispatch]);
 
   return (
     <>

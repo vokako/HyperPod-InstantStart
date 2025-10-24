@@ -4,9 +4,9 @@ import { ContainerOutlined, ApiOutlined, RocketOutlined, ExperimentOutlined, Dat
 import ThemeProvider from './components/ThemeProvider';
 import ConfigPanel from './components/ConfigPanel';
 import ServiceConfigPanel from './components/ServiceConfigPanel';
-import ClusterStatusV2 from './components/ClusterStatusV2';
+import ClusterStatusV2Redux from './components/ClusterStatusV2Redux';
 import TestPanel from './components/TestPanel';
-import StatusMonitor from './components/StatusMonitor';
+import StatusMonitorRedux from './components/StatusMonitorRedux';
 import DeploymentManager from './components/DeploymentManagerRedux';
 import HyperPodRecipes from './components/HyperPodRecipes';
 import TrainingMonitorPanel from './components/TrainingMonitorPanelRedux';
@@ -15,7 +15,7 @@ import ModelDownloadPanel from './components/ModelDownloadPanel';
 import S3StoragePanel from './components/S3StoragePanel';
 import HyperPodJobManager from './components/HyperPodJobManager';
 import ClusterManagement from './components/ClusterManagementRedux';
-import GlobalRefreshButton from './components/GlobalRefreshButton';
+import GlobalRefreshButtonRedux from './components/GlobalRefreshButtonRedux';
 import OperationFeedback from './components/OperationFeedback';
 import EnhancedModelManagement from './components/EnhancedModelManagement';
 import globalRefreshManager from './hooks/useGlobalRefresh';
@@ -641,21 +641,18 @@ function App() {
     }
   };
 
-  const getConnectionStatusDisplay = () => {
-    const config = refreshManager.getConfig();
-    const intervalMinutes = Math.floor(config.INTERVAL / 60000);
-    
+  const getConnectionStatusIndicator = () => {
     switch (connectionStatus) {
       case 'connected':
-        return `🟢 Real-time Updates (${intervalMinutes}min)`;
+        return '🟢';
       case 'connecting':
-        return '🟡 Connecting...';
+        return '🟡';
       case 'disconnected':
-        return '🟠 Offline (Refresh to reconnect)';
+        return '🟠';
       case 'error':
-        return '🔴 Connection Error';
+        return '🔴';
       default:
-        return '🔴 Unknown';
+        return '🔴';
     }
   };
 
@@ -664,7 +661,15 @@ function App() {
   return (
     <ThemeProvider>
       <Layout className="app-layout">
-        <Header className={`theme-header ${theme.name === 'aws' ? 'aws-header' : ''}`}>
+        <Header
+          className={`theme-header ${theme.name === 'aws' ? 'aws-header' : ''}`}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 24px'
+          }}
+        >
           <h1 className="theme-header-title">
             <CloudServerOutlined style={{ marginRight: '8px' }} />
             HyperPod InstantStart
@@ -672,33 +677,28 @@ function App() {
               Unified Platform
             </span>
           </h1>
-          
-          <div style={{ marginLeft: 'auto', color: 'white', fontSize: '12px' }}>
-            Status: {getConnectionStatusDisplay()}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <GlobalRefreshButtonRedux
+              showAutoRefresh={true}
+              autoRefreshOptions={{
+                defaultEnabled: true,
+                defaultInterval: 30000
+              }}
+              size="small"
+            />
+            <div style={{
+              fontSize: '12px',
+              lineHeight: '1',
+              display: 'flex',
+              alignItems: 'center'
+            }}>
+              {getConnectionStatusIndicator()}
+            </div>
           </div>
         </Header>
       
       <Content className="app-content">
-        {/* 全局刷新控制区域 */}
-        <div style={{ 
-          marginBottom: '16px', 
-          padding: '12px 16px',
-          backgroundColor: '#fafafa',
-          border: '1px solid #d9d9d9',
-          borderRadius: '6px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
-          <div>
-            <Text strong style={{ marginRight: '16px' }}>Global Refresh Control</Text>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              Use "Refresh All" to update all components, or enable auto-refresh for continuous updates
-            </Text>
-          </div>
-          <GlobalRefreshButton />
-        </div>
-        
         {/* 主标签切换区域 */}
         <div style={{ marginBottom: '16px' }}>
           <Tabs 
@@ -866,10 +866,7 @@ function App() {
               className="theme-card analytics"
               style={{ height: '45vh', overflow: 'auto' }}
             >
-              <ClusterStatusV2 
-                clusterData={clusterData}
-                onRefresh={fetchClusterStatus}
-              />
+              <ClusterStatusV2Redux />
             </Card>
           </Col>
           
@@ -906,11 +903,7 @@ function App() {
                   key="pods"
                 >
                   <div style={{ padding: '16px' }}>
-                    <StatusMonitor 
-                      pods={pods}
-                      services={[]}
-                      businessServices={businessServices}
-                      onRefresh={fetchPodsAndServices}
+                    <StatusMonitorRedux
                       activeTab="pods"
                     />
                   </div>
@@ -929,11 +922,7 @@ function App() {
                   key="services"
                 >
                   <div style={{ padding: '16px' }}>
-                    <StatusMonitor 
-                      pods={pods}
-                      services={services}
-                      businessServices={businessServices}
-                      onRefresh={fetchPodsAndServices}
+                    <StatusMonitorRedux
                       activeTab="services"
                     />
                   </div>
@@ -974,10 +963,7 @@ function App() {
                   key="rayjobs"
                 >
                   <div style={{ padding: '16px' }}>
-                    <StatusMonitor 
-                      pods={[]}
-                      services={[]}
-                      onRefresh={fetchPodsAndServices}
+                    <StatusMonitorRedux
                       activeTab="rayjobs"
                     />
                   </div>
