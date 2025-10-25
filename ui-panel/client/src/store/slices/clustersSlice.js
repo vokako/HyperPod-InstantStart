@@ -167,7 +167,7 @@ const clustersSlice = createSlice({
 
     // 处理依赖状态检查
       .addCase(checkDependenciesStatus.fulfilled, (state, action) => {
-        state.dependencies = action.payload;
+        state.dependencies = action.payload.dependencies;
       })
 
     // 处理依赖配置

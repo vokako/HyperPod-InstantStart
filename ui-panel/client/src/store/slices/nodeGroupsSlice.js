@@ -25,7 +25,10 @@ export const createHyperPod = createAsyncThunk(
         body: JSON.stringify(formData),
       });
 
-      if (!response.ok) throw new Error('Failed to create HyperPod');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create HyperPod');
+      }
       return await response.json();
     } catch (error) {
       return rejectWithValue(error.message);
@@ -43,7 +46,10 @@ export const deleteHyperPod = createAsyncThunk(
         headers: { 'Content-Type': 'application/json' },
       });
 
-      if (!response.ok) throw new Error('Failed to delete HyperPod');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete HyperPod');
+      }
       return await response.json();
     } catch (error) {
       return rejectWithValue(error.message);
@@ -62,7 +68,10 @@ export const addInstanceGroup = createAsyncThunk(
         body: JSON.stringify({ userConfig }),
       });
 
-      if (!response.ok) throw new Error('Failed to add instance group');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to add instance group');
+      }
       return await response.json();
     } catch (error) {
       return rejectWithValue(error.message);
@@ -81,7 +90,10 @@ export const scaleNodeGroup = createAsyncThunk(
         body: JSON.stringify({ desiredSize: count }),
       });
 
-      if (!response.ok) throw new Error('Failed to scale node group');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to scale node group');
+      }
       return await response.json();
     } catch (error) {
       return rejectWithValue(error.message);
@@ -99,8 +111,40 @@ export const deleteNodeGroup = createAsyncThunk(
         headers: { 'Content-Type': 'application/json' },
       });
 
-      if (!response.ok) throw new Error('Failed to delete node group');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete node group');
+      }
       return await response.json();
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
+// 异步操作：检查HyperPod创建状态
+export const checkHyperPodCreationStatus = createAsyncThunk(
+  'nodeGroups/checkHyperPodCreationStatus',
+  async (_, { rejectWithValue }) => {
+    try {
+      // 先获取当前活跃集群
+      const clusterInfoResponse = await fetch('/api/cluster/info');
+      const clusterInfo = await clusterInfoResponse.json();
+      const activeCluster = clusterInfo.activeCluster;
+
+      if (!activeCluster) {
+        return null; // 没有活跃集群
+      }
+
+      // 获取创建状态
+      const response = await fetch('/api/cluster/creating-hyperpod-clusters');
+      const result = await response.json();
+
+      if (response.ok && result.data && result.data[activeCluster]) {
+        return result.data[activeCluster]; // 返回详细状态对象
+      }
+
+      return null; // 没有创建状态
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -218,6 +262,13 @@ const nodeGroupsSlice = createSlice({
       .addCase(deleteNodeGroup.rejected, (state, action) => {
         state.nodeGroupDeletionStatus = 'error';
         state.error = action.payload;
+      })
+
+    // 处理检查HyperPod创建状态
+      .addCase(checkHyperPodCreationStatus.fulfilled, (state, action) => {
+        // 来自持久化文件的详细状态对象会覆盖Redux中的简单状态
+        // 这确保页面重启后能正确恢复创建状态显示
+        state.hyperPodCreationStatus = action.payload;
       });
   },
 });

@@ -8,8 +8,6 @@ LOCAL_IMAGE="ui-panel-dev2"
 
 echo "🐳 Starting Model Deployment UI with Docker (Development Mode)..."
 
-
-
 # 检查 Docker 是否安装
 if ! command -v docker &> /dev/null; then
     echo "❌ Docker is not installed. Please install Docker first."
@@ -24,15 +22,22 @@ PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254
 docker stop $LOCAL_IMAGE 2>/dev/null || true
 docker rm $LOCAL_IMAGE 2>/dev/null || true
 
-
-echo "📥 Trying to pull from remote repository..."
-if docker pull $REMOTE_REPO; then
-    echo "✅ Successfully pulled from remote repository"
+# 检查本地是否已有镜像
+if docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "^$LOCAL_IMAGE:latest$"; then
+    echo "✅ Local image $LOCAL_IMAGE already exists, using it directly"
+elif docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "^$REMOTE_REPO$"; then
+    echo "✅ Remote image already exists locally, tagging as $LOCAL_IMAGE"
     docker tag $REMOTE_REPO $LOCAL_IMAGE
-    echo "🏷️ Tagged as $LOCAL_IMAGE"
 else
-    echo "🔧 Failed to pull from remote repository, building locally..."
-    docker build -f Dockerfile.dev -t $LOCAL_IMAGE .
+    echo "📥 Trying to pull from remote repository..."
+    if docker pull $REMOTE_REPO; then
+        echo "✅ Successfully pulled from remote repository"
+        docker tag $REMOTE_REPO $LOCAL_IMAGE
+        echo "🏷️ Tagged as $LOCAL_IMAGE"
+    else
+        echo "🔧 Failed to pull from remote repository, building locally..."
+        docker build -f Dockerfile.dev -t $LOCAL_IMAGE .
+    fi
 fi
 
 # 确保本地目录权限

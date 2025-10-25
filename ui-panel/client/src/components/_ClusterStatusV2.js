@@ -355,6 +355,17 @@ const ClusterStatusV2 = ({ clusterData = [], onRefresh }) => {
           <Col span={4}>
             <Card size="small">
               <Statistic
+                title="Total Requests GPUs"
+                value={stats.usedGPUs + stats.pendingGPUs}
+                valueStyle={{
+                  color: (stats.usedGPUs + stats.pendingGPUs) > stats.totalGPUs ? '#cf1322' : '#666'
+                }}
+              />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card size="small">
+              <Statistic
                 title="Used GPUs"
                 value={stats.usedGPUs}
                 valueStyle={{ color: '#cf1322' }}
@@ -376,17 +387,6 @@ const ClusterStatusV2 = ({ clusterData = [], onRefresh }) => {
                 title="Pending GPUs"
                 value={stats.pendingGPUs}
                 valueStyle={{ color: '#faad14' }}
-              />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic
-                title="Total Requests GPUs"
-                value={stats.usedGPUs + stats.pendingGPUs}
-                valueStyle={{ 
-                  color: (stats.usedGPUs + stats.pendingGPUs) > stats.totalGPUs ? '#cf1322' : '#666'
-                }}
               />
             </Card>
           </Col>

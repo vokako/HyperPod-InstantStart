@@ -460,27 +460,27 @@ managedNodeGroups:
   static async deleteEksNodeGroup(nodeGroupName, clusterName) {
     try {
       const { execSync } = require('child_process');
-      
-      // 使用AWS CLI异步删除nodegroup
-      const deleteCommand = `aws eks delete-nodegroup --cluster-name ${clusterName} --nodegroup-name ${nodeGroupName}`;
+
+      // 使用eksctl删除nodegroup，会自动清理CloudFormation stack
+      const deleteCommand = `eksctl delete nodegroup --cluster=${clusterName} --name=${nodeGroupName}`;
       console.log(`Starting nodegroup deletion: ${deleteCommand}`);
-      
-      const result = execSync(deleteCommand, { 
+
+      const result = execSync(deleteCommand, {
         encoding: 'utf8',
-        timeout: 30000 // 30秒超时，AWS CLI应该很快返回
+        timeout: 300000 // 5分钟超时，eksctl删除可能需要更长时间
       });
-      
-      console.log(`AWS CLI delete-nodegroup result: ${result}`);
-      
+
+      console.log(`eksctl delete nodegroup result: ${result}`);
+
       return {
         success: true,
-        message: `NodeGroup ${nodeGroupName} deletion started`,
+        message: `NodeGroup ${nodeGroupName} deletion completed`,
         output: result
       };
-      
+
     } catch (error) {
-      console.error('Error starting EKS nodegroup deletion:', error);
-      throw new Error(`Failed to start nodegroup deletion ${nodeGroupName}: ${error.message}`);
+      console.error('Error deleting EKS nodegroup with eksctl:', error);
+      throw new Error(`Failed to delete nodegroup ${nodeGroupName}: ${error.message}`);
     }
   }
 

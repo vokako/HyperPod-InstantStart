@@ -4759,7 +4759,7 @@ app.get('/api/cluster/nodegroups', async (req, res) => {
     
     res.json({
       eksNodeGroups,
-      hyperPodInstanceGroups: hyperPodGroups
+      hyperPodGroups: hyperPodGroups
     });
   } catch (error) {
     console.error('Error fetching node groups:', error);
@@ -5046,33 +5046,57 @@ app.post('/api/cluster/hyperpod/add-instance-group', async (req, res) => {
     const describeResult = await execAsync(describeCmd);
     const clusterData = JSON.parse(describeResult.stdout);
 
-    // 构建实例组配置
-    const instanceGroupConfig = {
-      ClusterName: hyperPodCluster.ClusterName,
-      InstanceGroups: [
+    // 清理现有实例组的运行时字段，只保留配置字段
+    const cleanInstanceGroup = (instanceGroup) => {
+      const cleaned = {
+        InstanceCount: instanceGroup.TargetCount, // 使用TargetCount作为期望数量
+        InstanceGroupName: instanceGroup.InstanceGroupName,
+        InstanceType: instanceGroup.InstanceType,
+        LifeCycleConfig: instanceGroup.LifeCycleConfig,
+        ExecutionRole: instanceGroup.ExecutionRole,
+        ThreadsPerCore: instanceGroup.ThreadsPerCore,
+        InstanceStorageConfigs: instanceGroup.InstanceStorageConfigs
+      };
+
+      // 如果有TrainingPlanArn，保留它
+      if (instanceGroup.TrainingPlanArn) {
+        cleaned.TrainingPlanArn = instanceGroup.TrainingPlanArn;
+      }
+
+      return cleaned;
+    };
+
+    // 构建新的实例组配置
+    const newInstanceGroup = {
+      InstanceCount: userConfig.instanceCount,
+      InstanceGroupName: userConfig.instanceGroupName,
+      InstanceType: userConfig.instanceType,
+      LifeCycleConfig: clusterData.InstanceGroups[0]?.LifeCycleConfig,
+      ExecutionRole: clusterData.InstanceGroups[0]?.ExecutionRole,
+      ThreadsPerCore: userConfig.trainingPlanArn ? 2 : 1,
+      InstanceStorageConfigs: [
         {
-          InstanceCount: userConfig.instanceCount,
-          InstanceGroupName: userConfig.instanceGroupName,
-          InstanceType: userConfig.instanceType,
-          LifeCycleConfig: clusterData.InstanceGroups[0]?.LifeCycleConfig,
-          ExecutionRole: clusterData.InstanceGroups[0]?.ExecutionRole,
-          ThreadsPerCore: userConfig.trainingPlanArn ? 2 : 1,
-          InstanceStorageConfigs: [
-            {
-              EbsVolumeConfig: {
-                VolumeSizeInGB: userConfig.volumeSize,
-                RootVolume: false
-              }
-            }
-          ]
+          EbsVolumeConfig: {
+            VolumeSizeInGB: userConfig.volumeSize,
+            RootVolume: false
+          }
         }
       ]
     };
 
-    // 如果有TrainingPlanArn，添加到配置中
+    // 如果有TrainingPlanArn，添加到新实例组配置中
     if (userConfig.trainingPlanArn) {
-      instanceGroupConfig.InstanceGroups[0].TrainingPlanArn = userConfig.trainingPlanArn;
+      newInstanceGroup.TrainingPlanArn = userConfig.trainingPlanArn;
     }
+
+    // 构建完整的实例组配置（现有的 + 新的）
+    const instanceGroupConfig = {
+      ClusterName: hyperPodCluster.ClusterName,
+      InstanceGroups: [
+        ...clusterData.InstanceGroups.map(cleanInstanceGroup), // 现有的实例组
+        newInstanceGroup // 新的实例组
+      ]
+    };
 
     console.log('Generated instance group config:', JSON.stringify(instanceGroupConfig, null, 2));
 
@@ -6933,13 +6957,34 @@ app.get('/api/cluster/creating-hyperpod-clusters', async (req, res) => {
           } else if (stackStatus === 'DELETE_COMPLETE') {
             // 删除完成，清理metadata文件和状态
             console.log(`HyperPod deletion completed: ${clusterTag}`);
-            
+
             // 删除metadata文件
             const hyperPodConfigPath = path.join(__dirname, '../managed_clusters_info', clusterTag, 'metadata/hyperpod-config.json');
             if (fs.existsSync(hyperPodConfigPath)) {
               fs.unlinkSync(hyperPodConfigPath);
             }
-            
+
+            // 清理cluster_info.json中的hyperPodCluster字段
+            const metadataDir = clusterManager.getClusterMetadataDir(clusterTag);
+            const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+            if (fs.existsSync(clusterInfoPath)) {
+              try {
+                const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+
+                // 删除hyperPodCluster字段
+                if (clusterInfo.hyperPodCluster) {
+                  delete clusterInfo.hyperPodCluster;
+                  clusterInfo.lastModified = new Date().toISOString();
+
+                  // 保存更新后的metadata
+                  fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+                  console.log(`Removed hyperPodCluster field from cluster_info.json for ${clusterTag}`);
+                }
+              } catch (error) {
+                console.error(`Error cleaning hyperPodCluster metadata for ${clusterTag}:`, error);
+              }
+            }
+
             // 清理状态
             updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
             

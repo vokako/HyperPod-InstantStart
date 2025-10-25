@@ -51,6 +51,7 @@ import {
   selectClusterError,
   selectEffectiveDependenciesStatus
 } from '../store/selectors';
+import globalRefreshManager from '../hooks/useGlobalRefresh';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -382,6 +383,19 @@ const ClusterManagementRedux = () => {
     dispatch(fetchClusters());
   }, [dispatch]);
 
+  // 注册到全局刷新管理器
+  useEffect(() => {
+    const componentId = 'cluster-management-redux';
+
+    globalRefreshManager.subscribe(componentId, refreshAllStatus, {
+      priority: 5
+    });
+
+    return () => {
+      globalRefreshManager.unsubscribe(componentId);
+    };
+  }, []);
+
   // 监听活跃集群变化
   useEffect(() => {
     if (activeCluster) {
@@ -435,7 +449,7 @@ const ClusterManagementRedux = () => {
                                 <Button
                                   size="small"
                                   icon={<ReloadOutlined />}
-                                  onClick={() => dispatch(fetchClusters())}
+                                  onClick={refreshAllStatus}
                                   loading={loading}
                                   type="text"
                                 >
@@ -713,7 +727,7 @@ const ClusterManagementRedux = () => {
           </Form.Item>
 
           <Form.Item
-            label="HyperPod Cluster Name (Optional)"
+            label="HyperPod Cluster Name (Associated)"
             name="hyperPodClusters"
             extra="Enter the HyperPod cluster name associated with this EKS cluster"
           >

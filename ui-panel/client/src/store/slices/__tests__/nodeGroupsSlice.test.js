@@ -45,9 +45,10 @@ describe('nodeGroupsSlice reducers', () => {
       hyperPodCreationStatus: null
     };
 
-    const nextState = nodeGroupsReducer(initialState, setHyperPodCreationStatus('completed'));
+    const statusObj = { status: 'completed', phase: 'COMPLETED' };
+    const nextState = nodeGroupsReducer(initialState, setHyperPodCreationStatus(statusObj));
 
-    expect(nextState.hyperPodCreationStatus).toBe('completed');
+    expect(nextState.hyperPodCreationStatus).toEqual(statusObj);
   });
 
   it('should handle setHyperPodDeletionStatus', () => {

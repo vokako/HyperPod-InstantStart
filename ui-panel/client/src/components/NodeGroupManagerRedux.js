@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { Card, Table, Button, message, Tag, Space, Modal, InputNumber, Form, Select, Input, Typography, AutoComplete } from 'antd';
 import { ReloadOutlined, EditOutlined, ToolOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
@@ -10,6 +10,7 @@ import {
   addInstanceGroup,
   scaleNodeGroup,
   deleteNodeGroup,
+  checkHyperPodCreationStatus,
   clearHyperPodCreationStatus,
   clearNodeGroupOperationStatus
 } from '../store/slices/nodeGroupsSlice';
@@ -22,6 +23,7 @@ import {
   selectHyperPodDeletionStatus,
   selectEffectiveDependenciesStatus
 } from '../store/selectors';
+import globalRefreshManager from '../hooks/useGlobalRefresh';
 
 const { Text } = Typography;
 
@@ -273,31 +275,54 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     });
   };
 
+  // 统一的完整刷新函数（包含必需的创建状态恢复） - fixed useCallback import
+  const handleCompleteRefresh = useCallback(async () => {
+    try {
+      // 并行执行节点组刷新和创建状态恢复
+      await Promise.all([
+        dispatch(fetchNodeGroups()),
+        dispatch(checkHyperPodCreationStatus()) // 必需：恢复创建状态显示
+      ]);
+    } catch (error) {
+      console.error('Error in complete refresh:', error);
+    }
+  }, [dispatch]);
+
+  // 注册到全局刷新管理器
+  useEffect(() => {
+    const componentId = 'node-group-manager-redux';
+
+    globalRefreshManager.subscribe(componentId, handleCompleteRefresh, {
+      priority: 6
+    });
+
+    return () => {
+      globalRefreshManager.unsubscribe(componentId);
+    };
+  }, [handleCompleteRefresh]);
+
   // Initial data loading
   useEffect(() => {
-    dispatch(fetchNodeGroups());
-    fetchClusterInfo();
-  }, [dispatch]);
+    handleCompleteRefresh(); // 使用完整刷新链路
+  }, [handleCompleteRefresh]);
 
   // Response to external triggers
   useEffect(() => {
     if (refreshTrigger > 0) {
-      dispatch(fetchNodeGroups());
-      fetchClusterInfo();
+      handleCompleteRefresh(); // 使用完整刷新链路
     }
-  }, [refreshTrigger, dispatch]);
+  }, [refreshTrigger, handleCompleteRefresh]);
 
   // Response to activeCluster changes
   useEffect(() => {
     if (activeCluster) {
-      dispatch(fetchNodeGroups());
-      fetchClusterInfo();
+      handleCompleteRefresh(); // 使用完整刷新链路
 
       // Reset operation statuses
       dispatch(clearHyperPodCreationStatus());
       dispatch(clearNodeGroupOperationStatus());
     }
-  }, [activeCluster, dispatch]);
+  }, [activeCluster, handleCompleteRefresh, dispatch]);
 
   const renderStatus = (status) => {
     const statusColors = {
@@ -365,7 +390,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
 
   // 渲染HyperPod集群级操作按钮
   const renderHyperPodClusterActions = () => {
-    if (hyperPodGroups.length === 0) return null;
+    // 只有当HyperPod存在且没有创建状态时才显示集群级操作
+    if (hyperPodGroups.length === 0 || hyperPodCreationStatus) return null;
 
     // 获取第一个Instance Group的集群信息（所有Instance Group属于同一个集群）
     const clusterInfo = hyperPodGroups[0];
@@ -414,7 +440,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       <div style={{ marginBottom: '16px', textAlign: 'right' }}>
         <Button
           icon={<ReloadOutlined />}
-          onClick={() => dispatch(fetchNodeGroups())}
+          onClick={handleCompleteRefresh}
           loading={loading}
           size="small"
         >

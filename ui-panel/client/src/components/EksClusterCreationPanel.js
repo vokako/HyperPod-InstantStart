@@ -95,21 +95,21 @@ const EksClusterCreationPanel = () => {
   // 检查创建状态
   const checkCreationStatus = async (clusterTag) => {
     if (!clusterTag) return;
-    
+
     console.log('🔍 Checking creation status for:', clusterTag);
     setStatusLoading(true);
-    
+
     try {
       // 检查creating-clusters状态（这是权威状态源）
       const creatingResponse = await fetch('/api/cluster/creating-clusters');
       const creatingResult = await creatingResponse.json();
       console.log('📊 Creating clusters check result:', creatingResult);
-      
+
       if (creatingResult.success && creatingResult.clusters[clusterTag]) {
         // 仍在创建中
         const clusterInfo = creatingResult.clusters[clusterTag];
         console.log('📊 Cluster info from creating-clusters:', clusterInfo);
-        
+
         // 更新UI状态显示当前阶段
         setCreationStatus(prev => ({
           ...prev,
@@ -117,20 +117,35 @@ const EksClusterCreationPanel = () => {
           currentStackStatus: clusterInfo.currentStackStatus,
           lastChecked: new Date().toISOString()
         }));
-        
+
         console.log('🔄 Still creating, current phase:', clusterInfo.phase);
-        
+
       } else {
         // 不在creating-clusters中 = 真正完成
         console.log('✅ Cluster not in creating-clusters, fully completed');
         setCreationStatus(prev => ({ ...prev, status: 'COMPLETED' }));
         message.success(`Cluster ${clusterTag} created successfully! Configure dependencies in Cluster Information.`);
       }
-      
+
     } catch (error) {
       console.error('❌ Failed to check creation status:', error);
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  // 手动刷新逻辑（与手动刷新按钮保持一致）
+  const handleManualRefresh = async () => {
+    console.log('🔄 Manual refresh triggered', {
+      hasCreationStatus: !!creationStatus,
+      clusterTag: creationStatus?.clusterTag
+    });
+
+    if (creationStatus?.clusterTag) {
+      await checkCreationStatus(creationStatus.clusterTag);
+    } else {
+      // 没有创建中的集群时，检查是否有遗留的创建状态
+      await restoreCreationStatus();
     }
   };
 
@@ -272,23 +287,16 @@ const EksClusterCreationPanel = () => {
   // 集成全局刷新系统
   useEffect(() => {
     const componentId = 'eks-cluster-creation';
-    
-    const refreshFunction = async () => {
-      if (creationStatus?.clusterTag) {
-        await checkCreationStatus(creationStatus.clusterTag);
-      } else {
-        await restoreCreationStatus();
-      }
-    };
 
-    globalRefreshManager.subscribe(componentId, refreshFunction, {
+    // 全局刷新使用与手动刷新完全相同的逻辑
+    globalRefreshManager.subscribe(componentId, handleManualRefresh, {
       priority: 7
     });
 
     return () => {
       globalRefreshManager.unsubscribe(componentId);
     };
-  }, [creationStatus]);
+  }, []);
 
   // 获取当前步骤（简化版）
   const getCurrentStep = () => {
@@ -393,18 +401,11 @@ const EksClusterCreationPanel = () => {
             title="Cluster Creation Progress"
             extra={
               <Space>
-                <Button 
+                <Button
                   size="small"
                   icon={<ReloadOutlined />}
                   loading={statusLoading}
-                  onClick={() => {
-                    if (creationStatus?.clusterTag) {
-                      checkCreationStatus(creationStatus.clusterTag);
-                    } else {
-                      // 没有创建中的集群时，检查是否有遗留的创建状态
-                      restoreCreationStatus();
-                    }
-                  }}
+                  onClick={handleManualRefresh}
                   title="Refresh Status"
                 >
                   Refresh

@@ -274,6 +274,49 @@ await this.switchKubectlConfig(eksClusterName);        // 第6步：再更新kub
 - **统一依赖管理**: 创建集群和导入集群使用相同的依赖配置链路
 - **HyperPod信息统一**: 保存SageMaker API完整数据，包含Instance Groups和计算节点子网
 - **metadata优化**: 从metadata获取基础设施信息，兼容创建和导入集群
+- **统一刷新机制**: 手动和自动刷新使用相同的处理链路，确保功能一致性
+
+#### 刷新机制统一设计原则
+
+**核心原则**: 手动刷新和自动刷新只是**触发机制**，必须调用相同的处理函数
+
+**实现模式**:
+```javascript
+// ✅ 正确的统一刷新模式
+const refreshAllStatus = async () => {
+  await Promise.all([
+    dispatch(fetchClusters()),
+    dispatch(checkDependenciesStatus(activeCluster))
+  ]);
+  setRefreshTrigger(prev => prev + 1);
+  message.success('Status refreshed successfully');
+};
+
+// 手动刷新：按钮点击 → refreshAllStatus
+<Button onClick={refreshAllStatus}>Refresh</Button>
+
+// 自动刷新：全局刷新管理器 → refreshAllStatus
+globalRefreshManager.subscribe(componentId, refreshAllStatus, { priority: 5 });
+```
+
+**避免的反模式**:
+```javascript
+// ❌ 错误的双重机制 - 容易导致不一致
+// 手动刷新调用 refreshAllStatus
+// 自动刷新直接调用 dispatch(checkDependenciesStatus)
+```
+
+**适用场景**:
+- **集群状态刷新**: ClusterManagementRedux, EksClusterCreationPanel
+- **依赖配置更新**: configure dependency 完成后状态更新
+- **训练作业监控**: 作业状态和日志同步更新
+- **模型推理服务**: 服务状态和测试功能联动
+
+**技术优势**:
+- ✅ **行为一致**: 用户无论通过什么方式触发，看到的行为完全相同
+- ✅ **代码复用**: 只有一套刷新逻辑需要维护
+- ✅ **bug减少**: 避免"修改一处bug，引起新的10个bug"
+- ✅ **测试简化**: 只需测试一个刷新函数的正确性
 
 #### 依赖检测系统
 **检测的 Kubernetes 组件**:
@@ -1132,6 +1175,189 @@ aws ec2 describe-instances --instance-ids i-0032dfb9025e958a3 \
 
 ## 🚀 高级功能模块
 
+### HyperPod Banner 显示逻辑系统
+**功能**: NodeGroupManagerRedux 组件中的 HyperPod 状态显示系统
+**实现时间**: 2025-10-25
+
+#### Banner 类型和显示条件
+HyperPod Instance Groups 区域包含3个互斥的状态 banner：
+
+1. **创建中 Banner (第一优先级)**
+   - **显示条件**: `hyperPodCreationStatus && (...)`
+   - **样式**: 绿色背景 (`#f6ffed`)，蓝色处理标签
+   - **内容**: 显示创建状态、Stack名称、阶段和CloudFormation状态
+   - **数据来源**: Redux `hyperPodCreationStatus` 状态
+
+2. **集群级操作 Banner (第二优先级)**
+   - **显示条件**: `hyperPodGroups.length > 0 && !hyperPodCreationStatus`
+   - **样式**: 灰色背景 (`#fafafa`)，包含操作按钮
+   - **内容**: 显示集群名称和"Update Cluster Software"按钮
+   - **数据来源**: `hyperPodGroups[0].clusterName`
+
+3. **未找到 Banner (第三优先级)**
+   - **显示条件**: `hyperPodGroups.length === 0 && !hyperPodCreationStatus`
+   - **样式**: 橙色背景 (`#fff7e6`)，警告标签
+   - **内容**: "No HyperPod cluster exists in this EKS cluster"
+
+#### 关键问题和解决方案 (2025-10-25)
+**问题**: HyperPod 创建过程中，创建状态 banner 和集群操作 banner 同时显示
+**原因**: CloudFormation 完成后立即写入 `clusterInfo.hyperPodCluster`，但 `hyperPodCreationStatus` 还未清除
+
+**时序分析**:
+```javascript
+// 问题时序
+CloudFormation CREATE_COMPLETE
+→ registerCompletedHyperPod() 写入 clusterInfo.hyperPodCluster
+→ hyperPodGroups.length > 0 (可以查询到数据)
+→ hyperPodCreationStatus 仍存在 (还未清除)
+→ 两个 banner 同时显示 ❌
+```
+
+**解决方案**: 修改 `renderHyperPodClusterActions` 函数
+```javascript
+// 修改前
+if (hyperPodGroups.length === 0) return null;
+
+// 修改后
+if (hyperPodGroups.length === 0 || hyperPodCreationStatus) return null;
+```
+
+**状态场景覆盖**:
+- ✅ **首次使用**: `hyperPodGroups.length === 0` → 显示"未找到"banner
+- ✅ **创建中**: `hyperPodCreationStatus !== null` → 只显示"创建中"banner
+- ✅ **创建完成**: `hyperPodGroups.length > 0 && !hyperPodCreationStatus` → 只显示"集群操作"banner
+
+#### HyperPod 创建完成写入流程
+**触发时机**: CloudFormation Stack 状态变为 `CREATE_COMPLETE`
+**执行位置**: `server/index.js` 定时检查函数 (每60秒)
+
+**写入流程**:
+```javascript
+// 1. 检查 CloudFormation 状态
+const stackStatus = execSync(checkCmd, { encoding: 'utf8', timeout: 10000 }).trim();
+
+if (stackStatus === 'CREATE_COMPLETE') {
+  // 2. 调用注册函数
+  await registerCompletedHyperPod(clusterTag);
+
+  // 3. 清理创建状态
+  updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
+}
+```
+
+**registerCompletedHyperPod 函数详细流程**:
+```javascript
+async function registerCompletedHyperPod(clusterTag) {
+  // 1. 配置 HyperPod 自定义依赖
+  await HyperPodDependencyManager.configureHyperPodDependencies(clusterTag, clusterManager);
+
+  // 2. 获取 cluster_info.json 路径
+  const metadataDir = clusterManager.getClusterMetadataDir(clusterTag);
+  const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+
+  // 3. 读取现有集群信息
+  const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+
+  // 4. 调用 SageMaker API 获取 HyperPod 集群详细信息
+  const hyperPodClusterName = `hp-cluster-${clusterTag}`;
+  const hpCmd = `aws sagemaker describe-cluster --cluster-name ${hyperPodClusterName} --region ${region} --output json`;
+  const hpResult = await execAsync(hpCmd);
+  const hpData = JSON.parse(hpResult.stdout);
+
+  // 5. 添加来源标识
+  hpData.source = 'ui-created';
+
+  // 6. 写入完整的 HyperPod 集群信息到 cluster_info.json
+  clusterInfo.hyperPodCluster = hpData;  // 🔑 关键写入点
+  clusterInfo.lastModified = new Date().toISOString();
+
+  // 7. 保存更新后的 metadata
+  fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+}
+```
+
+**写入的数据结构**:
+```json
+{
+  "hyperPodCluster": {
+    "ClusterName": "hp-cluster-xxx",
+    "ClusterArn": "arn:aws:sagemaker:...",
+    "ClusterStatus": "InService",
+    "VpcConfig": {
+      "SecurityGroupIds": ["sg-xxx"],
+      "Subnets": ["subnet-xxx"]
+    },
+    "InstanceGroups": [{
+      "InstanceGroupName": "accelerated-group-1",
+      "InstanceType": "ml.g5.8xlarge",
+      "CurrentCount": 1,
+      "TargetCount": 1
+    }],
+    "ExecutionRole": "arn:aws:iam::...",
+    "source": "ui-created"
+  }
+}
+```
+
+#### HyperPod 删除后清理流程
+**触发时机**: CloudFormation Stack 状态变为 `DELETE_COMPLETE`
+**执行位置**: `server/index.js` 定时检查函数
+
+**清理流程**:
+```javascript
+if (stackStatus === 'DELETE_COMPLETE') {
+  console.log(`HyperPod deletion completed: ${clusterTag}`);
+
+  // 1. 删除 hyperpod-config.json 文件
+  const hyperPodConfigPath = path.join(__dirname, '../managed_clusters_info', clusterTag, 'metadata/hyperpod-config.json');
+  if (fs.existsSync(hyperPodConfigPath)) {
+    fs.unlinkSync(hyperPodConfigPath);
+  }
+
+  // 2. 清理 cluster_info.json 中的 hyperPodCluster 字段
+  const metadataDir = clusterManager.getClusterMetadataDir(clusterTag);
+  const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+  if (fs.existsSync(clusterInfoPath)) {
+    try {
+      const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+
+      // 删除 hyperPodCluster 字段
+      if (clusterInfo.hyperPodCluster) {
+        delete clusterInfo.hyperPodCluster;  // 🔑 关键清理点
+        clusterInfo.lastModified = new Date().toISOString();
+
+        // 保存更新后的 metadata
+        fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+        console.log(`Removed hyperPodCluster field from cluster_info.json for ${clusterTag}`);
+      }
+    } catch (error) {
+      console.error(`Error cleaning hyperPodCluster metadata for ${clusterTag}:`, error);
+    }
+  }
+
+  // 3. 清理创建状态记录
+  updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
+
+  // 4. 广播删除完成消息
+  broadcast({
+    type: 'hyperpod_deletion_completed',
+    clusterTag,
+    message: 'HyperPod cluster deleted successfully'
+  });
+}
+```
+
+**清理的文件和字段**:
+- ✅ `hyperpod-config.json` - 完整删除文件
+- ✅ `cluster_info.json` 中的 `hyperPodCluster` 字段 - 删除字段
+- ✅ `creating-hyperpod-clusters.json` 中的记录 - 标记为 COMPLETED
+
+#### 技术要点
+- **状态优先级**: 创建状态 > 集群操作显示
+- **数据一致性**: metadata 写入和状态清理必须同步
+- **用户体验**: 避免同时显示多个状态 banner
+- **清理完整性**: 删除时必须清理所有相关的 metadata 字段
+
 ### HyperPod 实例组动态扩展
 **功能**: 向现有 HyperPod 集群添加实例组，支持动态扩展计算资源
 **实现时间**: 2025-10-22
@@ -1497,6 +1723,11 @@ cat ui-panel/managed_clusters_info/creating-hyperpod-clusters.json
 - **问题**: 需要开放多个端口，配置复杂
 - **解决**: WebSocket 独立端口，减少端口暴露
 - **影响**: 简化安全组配置，提升网络安全
+
+### 刷新机制统一架构 (2025-10-25)
+- **问题**: 手动刷新和自动刷新使用不同的处理链路，导致行为不一致
+- **解决**: 统一刷新触发机制，手动和自动刷新调用相同的处理函数
+- **影响**: 确保功能一致性，避免重复代码和隐藏bug
 
 ## 🚀 未来扩展方向
 
