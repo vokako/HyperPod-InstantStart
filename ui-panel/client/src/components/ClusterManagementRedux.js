@@ -412,7 +412,7 @@ const ClusterManagementRedux = () => {
       {/* 注入自定义滚动条样式 */}
       <style dangerouslySetInnerHTML={{ __html: customScrollbarStyle }} />
 
-      <div style={{ padding: '24px' }}>
+      <div>
         <Card
           title={
             <Space>
@@ -420,6 +420,7 @@ const ClusterManagementRedux = () => {
               <span>Cluster Management</span>
             </Space>
           }
+          className="theme-card compute"
           style={{ marginBottom: 24 }}
         >
           <Tabs
@@ -563,7 +564,7 @@ const ClusterManagementRedux = () => {
                           const vpcId = clusterDetails?.vpcId || 'N/A';
 
                           return (
-                            <Card title="Cluster Details" size="small">
+                            <Card title="Cluster Details" size="small" className="theme-card analytics">
                               <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                                 <Row gutter={[16, 16]}>
                                   <Col span={12}>
@@ -633,7 +634,7 @@ const ClusterManagementRedux = () => {
                           cluster={clusters.find(c => c.clusterTag === activeCluster)}
                         />
                       ) : (
-                        <Card title="Node Groups" style={{ height: '100%' }}>
+                        <Card title="Node Groups" style={{ height: '100%' }} className="theme-card database">
                           <div style={{
                             display: 'flex',
                             justifyContent: 'center',

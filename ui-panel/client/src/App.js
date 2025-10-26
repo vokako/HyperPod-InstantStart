@@ -841,18 +841,13 @@ function App() {
             </Col>
           </Row>
           
-          <div style={{ 
-            padding: '0 16px',
+          <div style={{
             display: activeMainTab === 'training-history' ? 'block' : 'none'
           }}>
             <TrainingHistoryPanel />
           </div>
           
-          <div style={{ 
-            display: activeMainTab === 'model-management' ? 'block' : 'none',
-            padding: '16px',
-            height: '50vh'
-          }}>
+          <div style={{ display: activeMainTab === 'model-management' ? 'block' : 'none' }}>
             <EnhancedModelManagement />
           </div>
         </div>

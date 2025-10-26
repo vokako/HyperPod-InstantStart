@@ -738,6 +738,7 @@ const TrainingHistoryPanel = () => {
             {loading && <Spin size="small" />}
           </Space>
         }
+        className="theme-card analytics"
         extra={
           <Space>
             <Button
