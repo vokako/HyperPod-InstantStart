@@ -41,9 +41,6 @@ RUN npm install
 COPY client/package*.json ./client/
 RUN cd client && npm install
 
-# 复制所有源代码
-COPY . .
-
 # 安装 Python 依赖（如果存在）
 RUN if [ -f requirements.txt ]; then \
     pip3 install --break-system-packages --force-reinstall -r requirements.txt; \
@@ -51,9 +48,6 @@ RUN if [ -f requirements.txt ]; then \
 
 # 创建必要的目录
 RUN mkdir -p logs tmp
-
-# 再次安装客户端依赖以确保完整性
-RUN cd client && npm install --force
 
 # 确保node用户拥有所有必要的权限
 RUN chown -R node:node /app

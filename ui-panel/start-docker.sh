@@ -55,6 +55,7 @@ docker run -d \
   -v $(pwd)/client/src:/app/client/src \
   -v $(pwd)/client/public:/app/client/public \
   -v $(pwd)/client/user.env:/app/client/user.env \
+  -v $(pwd)/client/package.json:/app/client/package.json \
   -v $(pwd)/templates:/app/templates \
   -v $(pwd)/deployments:/app/deployments \
   -v $(pwd)/config:/app/config \
