@@ -33,18 +33,27 @@ WORKDIR /app
 # 创建node用户的目录并设置权限
 RUN mkdir -p /home/node/.kube /home/node/.aws && chown -R node:node /home/node
 
+# 复制 package.json 文件并安装服务器端依赖
 COPY package*.json ./
-COPY client/package*.json ./client/
-
 RUN npm install
+
+# 复制客户端 package.json 并安装客户端依赖
+COPY client/package*.json ./client/
 RUN cd client && npm install
 
-COPY requirements.txt* ./
+# 复制所有源代码
+COPY . .
+
+# 安装 Python 依赖（如果存在）
 RUN if [ -f requirements.txt ]; then \
     pip3 install --break-system-packages --force-reinstall -r requirements.txt; \
     fi
 
+# 创建必要的目录
 RUN mkdir -p logs tmp
+
+# 再次安装客户端依赖以确保完整性
+RUN cd client && npm install --force
 
 # 确保node用户拥有所有必要的权限
 RUN chown -R node:node /app
