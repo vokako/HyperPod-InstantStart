@@ -9,7 +9,7 @@ export const REFRESH_CONFIG = {
     autoRefreshEnabled: false,        // 默认关闭自动刷新
     autoRefreshInterval: 60000,       // 自动刷新间隔60秒
     maxConcurrentRefresh: 5,          // 最大并发刷新数
-    refreshTimeout: 60000,            // 单个刷新超时60秒
+    refreshTimeout: 120000,           // 单个刷新超时120秒 (增加以处理长时间操作如Karpenter)
     retryAttempts: 2,                 // 失败重试次数
     showRefreshNotifications: true,   // 显示刷新通知
     enableDebugLogs: process.env.NODE_ENV === 'development' // 开发环境启用调试日志
@@ -144,7 +144,9 @@ export const REFRESH_CONFIG = {
         { components: ['app-status', 'pods-services'], delay: 5000 }, // 等待集群状态更新
         { components: ['all'], delay: 15000 } // 软件更新可能需要更长时间
       ]
-    }
+    },
+    // 移除karpenter-install和karpenter-uninstall的复杂刷新配置
+    // 按照简化架构思路：用户会通过定时/手动刷新查看kubectl的真实状态
   },
   
   // 刷新策略配置

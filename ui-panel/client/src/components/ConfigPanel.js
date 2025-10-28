@@ -35,7 +35,7 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
   const [vllmForm] = Form.useForm();
   const [ollamaForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('vllm');
+  const [activeTab, setActiveTab] = useState('container');
 
   // Docker镜像预设选项 - 使用useMemo避免重新创建导致焦点丢失
   const dockerImageOptions = useMemo(() => [
@@ -609,7 +609,7 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
               Container
             </Space>
           } 
-          key="vllm"
+          key="container"
         >
           <VLLMForm />
         </TabPane>

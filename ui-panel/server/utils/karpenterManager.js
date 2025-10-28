@@ -503,6 +503,55 @@ class KarpenterManager {
   }
 
   /**
+   * 获取HyperPod集群使用的计算子网
+   * @param {string} clusterTag - 集群标识
+   * @param {Object} clusterManager - 集群管理器实例
+   * @returns {Promise<Array>} HyperPod子网ID列表
+   */
+  static async getHyperPodComputeSubnets(clusterTag, clusterManager) {
+    try {
+      // 从cluster metadata获取HyperPod集群信息
+      const metadataDir = clusterManager.getClusterMetadataDir(clusterTag);
+      const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+
+      if (!fs.existsSync(clusterInfoPath)) {
+        throw new Error(`Cluster info not found: ${clusterInfoPath}`);
+      }
+
+      const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+
+      // 从hyperPodCluster字段获取子网信息
+      if (clusterInfo.hyperPodCluster) {
+        const hyperPodData = clusterInfo.hyperPodCluster;
+
+        // 优先获取InstanceGroups中的OverrideVpcConfig.Subnets
+        if (hyperPodData.InstanceGroups && hyperPodData.InstanceGroups.length > 0) {
+          for (const instanceGroup of hyperPodData.InstanceGroups) {
+            if (instanceGroup.OverrideVpcConfig && instanceGroup.OverrideVpcConfig.Subnets) {
+              console.log(`Found HyperPod compute subnets from InstanceGroups: ${instanceGroup.OverrideVpcConfig.Subnets}`);
+              return instanceGroup.OverrideVpcConfig.Subnets;
+            }
+          }
+        }
+
+        // 回退到集群级别的VpcConfig.Subnets
+        if (hyperPodData.VpcConfig && hyperPodData.VpcConfig.Subnets) {
+          console.log(`Found HyperPod compute subnets from VpcConfig: ${hyperPodData.VpcConfig.Subnets}`);
+          return hyperPodData.VpcConfig.Subnets;
+        }
+      }
+
+      // 如果没有找到HyperPod子网，返回空数组
+      console.warn(`No HyperPod compute subnets found for cluster: ${clusterTag}`);
+      return [];
+
+    } catch (error) {
+      console.error('Error getting HyperPod compute subnets:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 更新集群metadata
    * @param {string} clusterTag - 集群标识
    * @param {Object} clusterManager - 集群管理器实例
@@ -927,7 +976,7 @@ class KarpenterManager {
       await this.ensurePriorityClasses();
 
       // 生成统一的 YAML 内容（NodeClass + NodePool，类似命令行部署）
-      const nodeClassYaml = this.generateNodeClassYaml(config, stackInfo);
+      const nodeClassYaml = this.generateNodeClassYaml(config, stackInfo, config.specificSubnet);
       const nodePoolYaml = this.generateNodePoolYaml(config, stackInfo);
 
       // 组合成单个 YAML 文件，用 --- 分隔（就像命令行部署一样）
@@ -938,8 +987,9 @@ class KarpenterManager {
 
       return {
         success: true,
-        message: `Unified Karpenter resources (${config.nodeClassName} + ${config.nodePoolName}) created successfully`,
-        data: result
+        message: `Unified Karpenter resources (${config.nodeClassName} + ${config.nodePoolName}) created successfully${config.specificSubnet ? ` (using subnet: ${config.specificSubnet})` : ''}`,
+        data: result,
+        subnetUsed: config.specificSubnet || 'discovery-tags'
       };
     } catch (error) {
       throw new Error(`Failed to create unified Karpenter resources: ${error.message}`);
@@ -1068,12 +1118,28 @@ class KarpenterManager {
   // ===== YAML 模板生成方法 =====
 
   /**
-   * 生成 NodeClass YAML
+   * 生成 NodeClass YAML (支持指定特定子网)
    * @param {Object} config - NodeClass 配置
    * @param {Object} stackInfo - 集群基础设施信息
+   * @param {string} specificSubnet - 可选的特定子网ID
    * @returns {string} NodeClass YAML 内容
    */
-  static generateNodeClassYaml(config, stackInfo) {
+  static generateNodeClassYaml(config, stackInfo, specificSubnet = null) {
+    let subnetSelectorYaml = '';
+
+    if (specificSubnet) {
+      // 使用指定的特定子网
+      console.log(`Using specific subnet for Karpenter: ${specificSubnet}`);
+      subnetSelectorYaml = `  subnetSelectorTerms:
+    - id: ${specificSubnet}`;
+    } else {
+      // 回退到标签发现机制
+      console.log(`Using discovery tags for subnet selection`);
+      subnetSelectorYaml = `  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${stackInfo.EKS_CLUSTER_NAME}"`;
+    }
+
     return `---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass
@@ -1083,9 +1149,7 @@ spec:
   role: "KarpenterNodeRole-${stackInfo.EKS_CLUSTER_NAME}"
   amiSelectorTerms:
     - alias: "${config.amiAlias || 'al2023@latest'}"
-  subnetSelectorTerms:
-    - tags:
-        karpenter.sh/discovery: "${stackInfo.EKS_CLUSTER_NAME}"
+${subnetSelectorYaml}
   securityGroupSelectorTerms:
     - tags:
         karpenter.sh/discovery: "${stackInfo.EKS_CLUSTER_NAME}"

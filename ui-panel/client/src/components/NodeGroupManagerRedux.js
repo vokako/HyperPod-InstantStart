@@ -69,6 +69,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     nodePools: [],
     nodes: []
   });
+  const [karpenterResourcesLoading, setKarpenterResourcesLoading] = useState(true);
   const [nodeClassModalVisible, setNodeClassModalVisible] = useState(false);
   const [createKarpenterResourceLoading, setCreateKarpenterResourceLoading] = useState(false);
   const [karpenterResourceForm] = Form.useForm();
@@ -80,6 +81,16 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
   const [refreshError, setRefreshError] = useState(null);
   const [isAutoFetching, setIsAutoFetching] = useState(false);
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+
+  // HyperPod子网相关状态
+  const [hyperPodSubnets, setHyperPodSubnets] = useState([]);
+  const [subnetsLoading, setSubnetsLoading] = useState(false);
+
+  // 子网感知的实例类型状态
+  const [selectedSubnet, setSelectedSubnet] = useState(null);
+  const [filteredInstanceTypes, setFilteredInstanceTypes] = useState([]);
+  const [subnetInstanceTypesCache, setSubnetInstanceTypesCache] = useState({});
+  const [isLoadingSubnetTypes, setIsLoadingSubnetTypes] = useState(false);
 
   // GPU实例类型配置
   const gpuInstanceFamilies = {
@@ -144,9 +155,13 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         setKarpenterStatus(data);
       } else {
         console.error('Failed to fetch Karpenter status:', data.error);
+        // 即使出错也要设置状态，避免一直加载
+        setKarpenterStatus({ installed: false, error: data.error });
       }
     } catch (error) {
       console.error('Error fetching Karpenter status:', error);
+      // 网络错误时也要设置状态
+      setKarpenterStatus({ installed: false, error: error.message });
     }
   }, []);
 
@@ -251,6 +266,90 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     }
   }, []);
 
+  // 子网选择变化处理函数
+  const handleSubnetChangeForInstanceTypes = useCallback(async (subnetId) => {
+    setSelectedSubnet(subnetId);
+
+    if (!subnetId) {
+      setFilteredInstanceTypes([]);
+      return;
+    }
+
+    // 检查是否有该子网的缓存
+    if (subnetInstanceTypesCache[subnetId]) {
+      console.log(`Using cached instance types for subnet: ${subnetId}`);
+      setFilteredInstanceTypes(subnetInstanceTypesCache[subnetId]);
+      return;
+    }
+
+    // 从后端获取该子网的实例类型
+    setInstanceTypesLoading(true);
+    setIsLoadingSubnetTypes(true);
+    setRefreshError(null);
+
+    try {
+      console.log(`🔍 Fetching instance types for subnet: ${subnetId}`);
+      const response = await fetch('/api/aws/instance-types/by-subnet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subnetId })
+      });
+
+      const data = await response.json();
+      console.log(`📡 API Response:`, {
+        status: response.status,
+        success: data.success,
+        instanceCount: data.instanceTypes?.length || 0,
+        error: data.error,
+        availabilityZone: data.availabilityZone
+      });
+
+      if (response.ok && data.success) {
+        setFilteredInstanceTypes(data.instanceTypes);
+
+        // 更新缓存
+        setSubnetInstanceTypesCache(prev => ({
+          ...prev,
+          [subnetId]: data.instanceTypes
+        }));
+
+        console.log(`✅ Loaded ${data.instanceTypes.length} instance types for subnet: ${subnetId} (AZ: ${data.availabilityZone})`);
+      } else {
+        console.error(`❌ API Error:`, data);
+        throw new Error(data.error || 'Failed to fetch subnet instance types');
+      }
+    } catch (error) {
+      console.error('Error fetching subnet instance types:', error);
+      setRefreshError(`Failed to load instance types for selected subnet: ${error.message}`);
+      setFilteredInstanceTypes([]);
+    } finally {
+      setInstanceTypesLoading(false);
+      setIsLoadingSubnetTypes(false);
+    }
+  }, [subnetInstanceTypesCache]);
+
+  // 获取HyperPod子网
+  const fetchHyperPodSubnets = useCallback(async () => {
+    setSubnetsLoading(true);
+    try {
+      const response = await fetch('/api/cluster/karpenter/hyperpod-subnets');
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setHyperPodSubnets(data.data.subnets);
+        console.log(`Loaded ${data.data.count} HyperPod subnets`);
+      } else {
+        console.warn('No HyperPod subnets found or failed to fetch');
+        setHyperPodSubnets([]);
+      }
+    } catch (error) {
+      console.error('Error fetching HyperPod subnets:', error);
+      setHyperPodSubnets([]);
+    } finally {
+      setSubnetsLoading(false);
+    }
+  }, []);
+
   // 渲染实例类型复选框
   const renderInstanceTypeCheckboxes = () => {
     if (instanceTypesLoading) {
@@ -259,7 +358,9 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           <Spin size="large" />
           <div style={{ marginTop: '16px' }}>
             <Typography.Text type="secondary">
-              {isManualRefreshing
+              {isLoadingSubnetTypes
+                ? 'Fetching instance types for selected subnet...'
+                : isManualRefreshing
                 ? 'Refreshing instance types from AWS...'
                 : isAutoFetching
                   ? 'Auto-fetching instance types from AWS...'
@@ -270,8 +371,11 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       );
     }
 
+    // 根据是否选择了子网决定显示哪些实例类型
+    const displayInstanceTypes = selectedSubnet ? filteredInstanceTypes : availableInstanceTypes;
+
     // Show error state if no instance types and there's an error
-    if (availableInstanceTypes.length === 0 && refreshError) {
+    if (displayInstanceTypes.length === 0 && refreshError) {
       return (
         <div style={{ textAlign: 'center', padding: '40px' }}>
           <Alert
@@ -283,10 +387,10 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                 <Button
                   type="primary"
                   icon={<ReloadOutlined />}
-                  onClick={refreshInstanceTypes}
+                  onClick={selectedSubnet ? () => handleSubnetChangeForInstanceTypes(selectedSubnet) : refreshInstanceTypes}
                   style={{ marginTop: '16px' }}
                 >
-                  Fetch from AWS
+                  {selectedSubnet ? 'Retry for Subnet' : 'Fetch from AWS'}
                 </Button>
               </div>
             }
@@ -296,8 +400,22 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       );
     }
 
-    // Show cache info if available
-    const cacheInfoDisplay = cacheInfo && (
+    // Show subnet-specific info or cache info
+    const infoDisplay = selectedSubnet ? (
+      <div style={{
+        marginBottom: '16px',
+        padding: '8px 12px',
+        backgroundColor: '#f6ffed',
+        border: '1px solid #b7eb8f',
+        borderRadius: '4px',
+        fontSize: '12px'
+      }}>
+        <Typography.Text type="secondary">
+          📍 Showing {displayInstanceTypes.length} instance types available in selected subnet
+          {selectedSubnet && ` (${hyperPodSubnets.find(s => s.subnetId === selectedSubnet)?.availabilityZone})`}
+        </Typography.Text>
+      </div>
+    ) : cacheInfo && (
       <div style={{
         marginBottom: '16px',
         padding: '8px 12px',
@@ -316,7 +434,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     );
 
     // 按实例系列分组
-    const groupedTypes = availableInstanceTypes.reduce((acc, type) => {
+    const groupedTypes = displayInstanceTypes.reduce((acc, type) => {
       if (!acc[type.family]) {
         acc[type.family] = [];
       }
@@ -326,7 +444,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
 
     return (
       <div>
-        {cacheInfoDisplay}
+        {infoDisplay}
         <div
           className="instance-types-scrollable"
           style={{
@@ -431,6 +549,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
 
   // 获取 Karpenter 资源 (NodeClass/NodePool)
   const fetchKarpenterResources = useCallback(async () => {
+    setKarpenterResourcesLoading(true);
     try {
       const response = await fetch('/api/cluster/karpenter/resources');
       const data = await response.json();
@@ -451,6 +570,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         nodePools: [],
         nodes: []
       });
+    } finally {
+      setKarpenterResourcesLoading(false);
     }
   }, []);
 
@@ -515,6 +636,12 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       message.success(`Karpenter resources created successfully: ${nodeClassName} and ${nodePoolName}`);
       setNodeClassModalVisible(false);
       karpenterResourceForm.resetFields();
+
+      // 重置子网相关状态
+      setSelectedSubnet(null);
+      setFilteredInstanceTypes([]);
+      setIsLoadingSubnetTypes(false);
+
       await fetchKarpenterResources();
 
     } catch (error) {
@@ -811,12 +938,13 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         dispatch(checkHyperPodCreationStatus()), // 必需：恢复创建状态显示
         fetchKarpenterStatus(), // 加载Karpenter状态
         fetchKarpenterResources(), // 加载NodeClass/NodePool资源
-        fetchAvailableInstanceTypes() // 加载实例类型
+        fetchAvailableInstanceTypes(), // 加载实例类型
+        fetchHyperPodSubnets() // 加载HyperPod子网
       ]);
     } catch (error) {
       console.error('Error in complete refresh:', error);
     }
-  }, [dispatch, fetchKarpenterStatus, fetchKarpenterResources, fetchAvailableInstanceTypes]);
+  }, [dispatch, fetchKarpenterStatus, fetchKarpenterResources, fetchAvailableInstanceTypes, fetchHyperPodSubnets]);
 
   // 注册到全局刷新管理器
   useEffect(() => {
@@ -831,47 +959,9 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     };
   }, [handleCompleteRefresh]);
 
-  // 订阅Karpenter WebSocket消息
-  useEffect(() => {
-    const handleKarpenterMessages = (data) => {
-      switch (data.type) {
-        case 'karpenter_installation_completed':
-          setKarpenterInstalling(false);
-          fetchKarpenterStatus(); // 刷新状态
-          fetchKarpenterResources(); // 刷新资源
-          break;
-        case 'karpenter_installation_failed':
-          setKarpenterInstalling(false);
-          fetchKarpenterStatus(); // 刷新状态
-          break;
-        case 'karpenter_nodeclass_created':
-        case 'karpenter_nodeclass_deleted':
-        case 'karpenter_nodepool_created':
-        case 'karpenter_nodepool_deleted':
-          fetchKarpenterResources(); // 刷新资源
-          break;
-        case 'karpenter_uninstallation_completed':
-          setKarpenterUninstalling(false);
-          setKarpenterStatus({ installed: false }); // 立即设置为未安装状态
-          fetchKarpenterStatus(); // 刷新详细状态
-          break;
-        case 'karpenter_uninstallation_failed':
-          setKarpenterUninstalling(false);
-          fetchKarpenterStatus(); // 刷新状态
-          break;
-      }
-    };
-
-    // 订阅Karpenter安装消息
-    globalRefreshManager.subscribe('karpenter-install', handleKarpenterMessages, { priority: 5 });
-    // 订阅Karpenter卸载消息
-    globalRefreshManager.subscribe('karpenter-uninstall', handleKarpenterMessages, { priority: 5 });
-
-    return () => {
-      globalRefreshManager.unsubscribe('karpenter-install');
-      globalRefreshManager.unsubscribe('karpenter-uninstall');
-    };
-  }, [fetchKarpenterStatus]);
+  // 移除错误的 globalRefreshManager 订阅
+  // Karpenter 状态应该通过用户主动刷新来获取，而不是 WebSocket 推送
+  // globalRefreshManager 只用于管理前端组件的刷新，不用于集群资源状态订阅
 
   // Initial data loading
   // 使用 ref 来跟踪是否已经执行过初始加载
@@ -1180,18 +1270,19 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           loading={loading}
           size="small"
           pagination={false}
+          locale={{ emptyText: eksNodeGroups.length === 0 ? 'No EKS node groups' : 'No data' }}
+          style={{ minHeight: eksNodeGroups.length === 0 ? '60px' : 'auto' }}
         />
       </Card>
 
-      {/* Karpenter Resources 区域 */}
       <Card
-        title="Karpenter Resources"
+        title="EC2 Karpenter Resources"
         size="small"
         style={{ marginTop: 16 }}
         extra={
           <Space>
             {/* 未安装时显示安装按钮 */}
-            {!karpenterStatus?.installed && (
+            {karpenterStatus && !karpenterStatus.installed && (
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -1218,10 +1309,18 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                   size="small"
                   type="primary"
                   icon={<PlusOutlined />}
-                  onClick={() => setNodeClassModalVisible(true)}
-                  title="Create Karpenter resources (NodeClass and NodePool)"
+                  onClick={() => {
+                    setNodeClassModalVisible(true);
+                    fetchHyperPodSubnets();
+
+                    // 确保每次打开时都是干净状态
+                    setSelectedSubnet(null);
+                    setFilteredInstanceTypes([]);
+                    setIsLoadingSubnetTypes(false);
+                  }}
+                  title="Create EC2 Node Definition (NodeClass and NodePool)"
                 >
-                  Create Karpenter
+                  Create EC2 Node Definition
                 </Button>
                 <Button
                   size="small"
@@ -1248,8 +1347,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           </Space>
         }
       >
-        {/* 未安装状态 Banner */}
-        {!karpenterStatus?.installed && (
+        {/* 未安装状态 Banner - 只有当 karpenterStatus 已加载且未安装时才显示 */}
+        {karpenterStatus && !karpenterStatus.installed && (
           <div style={{
             backgroundColor: '#fff7e6',
             border: '1px solid #ffd591',
@@ -1274,10 +1373,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         )}
 
         {/* 已安装状态 - Karpenter 资源管理 */}
-        {karpenterStatus?.installed && (
+        {karpenterStatus?.installed && !karpenterResourcesLoading && (
           <div>
-
-
             {/* Karpenter NodePool 展示区域（包含 NodeClass 信息作为列）*/}
             <div style={{ marginTop: 16 }}>
               {karpenterResources.nodePools.length > 0 ? (
@@ -1285,29 +1382,18 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                   dataSource={karpenterResources.nodePools}
                   columns={[
                     {
-                      title: 'Karpenter Node Pool Name',
+                      title: 'Node Pool',
                       dataIndex: 'name',
                       key: 'name',
                       render: (text) => <Text strong>{text}</Text>
                     },
                     {
-                      title: 'NodeClass',
+                      title: 'Ec2NodeClass',
                       dataIndex: 'nodeClassRef',
                       key: 'nodeClassRef',
-                      render: (nodeClassRef) => {
-                        // 查找对应的 NodeClass 详细信息
-                        const nodeClass = karpenterResources.nodeClasses.find(nc => nc.name === nodeClassRef);
-                        return (
-                          <div>
-                            <Tag color="blue">{nodeClassRef}</Tag>
-                            {nodeClass && (
-                              <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: '2px' }}>
-                                AMI: {nodeClass.amiAlias} • Vol: {nodeClass.volumeSize} ({nodeClass.volumeType})
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }
+                      render: (nodeClassRef) => (
+                        <Tag color="blue">{nodeClassRef}</Tag>
+                      )
                     },
                     {
                       title: 'Capacity Type',
@@ -1343,6 +1429,16 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                       dataIndex: 'gpuLimit',
                       key: 'gpuLimit',
                       render: (text) => text || 'Not Set'
+                    },
+                    {
+                      title: 'EBS Volume',
+                      dataIndex: 'nodeClassRef',
+                      key: 'ebsVolume',
+                      render: (nodeClassRef) => {
+                        // 查找对应的 NodeClass 详细信息
+                        const nodeClass = karpenterResources.nodeClasses.find(nc => nc.name === nodeClassRef);
+                        return nodeClass ? `${nodeClass.volumeSize}` : 'N/A';
+                      }
                     },
                     {
                       title: 'Instance Types',
@@ -1401,6 +1497,13 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* 当 karpenterStatus 正在加载或 karpenterResources 正在加载时显示 loading */}
+        {(!karpenterStatus || karpenterResourcesLoading) && (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Spin tip="Loading Karpenter information..." />
           </div>
         )}
       </Card>
@@ -1675,13 +1778,18 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
 
       {/* Karpenter 资源创建模态框 */}
       <Modal
-        title="Create Karpenter"
+        title="Create EC2 Node Definition"
         open={nodeClassModalVisible}
         onOk={() => karpenterResourceForm.submit()}
         onCancel={() => {
           if (createKarpenterResourceLoading) return;
           setNodeClassModalVisible(false);
           karpenterResourceForm.resetFields();
+
+          // 重置子网相关状态
+          setSelectedSubnet(null);
+          setFilteredInstanceTypes([]);
+          setIsLoadingSubnetTypes(false);
         }}
         okText="Create Resource"
         confirmLoading={createKarpenterResourceLoading}
@@ -1726,28 +1834,69 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
               </Col>
             </Row>
 
+            {/* Subnet Selection - 移到实例类型之前 */}
             <Row gutter={16}>
               <Col span={24}>
                 <Form.Item
                   label={
                     <Space>
+                      <span>Subnet Selection</span>
+                      <Tooltip title="Choose a specific subnet for Karpenter nodes. Select HyperPod subnet for better network locality">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                  }
+                  name="specificSubnet"
+                  rules={[{ required: true, message: 'Please select a subnet' }]}
+                >
+                  <Select
+                    placeholder="Select a subnet"
+                    allowClear
+                    loading={subnetsLoading}
+                    disabled={subnetsLoading}
+                    onChange={handleSubnetChangeForInstanceTypes}
+                  >
+                    {hyperPodSubnets.map(subnet => (
+                      <Select.Option key={subnet.subnetId} value={subnet.subnetId}>
+                        {subnet.name} (HyperPod) - {subnet.availabilityZone}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {/* Instance Types - 现在基于选中的子网显示 */}
+            <Row gutter={16} style={{ marginTop: 16 }}>
+              <Col span={24}>
+                <Form.Item
+                  label={
+                    <Space>
                       <span>Available GPU Instance Types</span>
-                      <Tooltip title="Select instance types that Karpenter can provision">
+                      <Tooltip title="Select instance types available in the selected subnet">
                         <InfoCircleOutlined />
                       </Tooltip>
                       <Button
                         size="small"
                         icon={<ReloadOutlined />}
-                        onClick={refreshInstanceTypes}
+                        onClick={selectedSubnet ? () => handleSubnetChangeForInstanceTypes(selectedSubnet) : refreshInstanceTypes}
                         loading={instanceTypesLoading}
                         type={refreshError ? "primary" : "default"}
+                        disabled={!selectedSubnet}
                       >
                         {refreshError ? 'Fetch from AWS' : 'Refresh'}
                       </Button>
                     </Space>
                   }
                 >
-                  {renderInstanceTypeCheckboxes()}
+                  {selectedSubnet ? (
+                    renderInstanceTypeCheckboxes()
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                      <InfoCircleOutlined style={{ fontSize: '24px', marginBottom: '8px' }} />
+                      <div>Please select a subnet first to view available instance types</div>
+                    </div>
+                  )}
                 </Form.Item>
               </Col>
             </Row>
@@ -1788,13 +1937,14 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                 >
                   <InputNumber
                     min={1}
-                    max={200}
+                    max={100}
                     style={{ width: '100%' }}
                     placeholder="100"
                   />
                 </Form.Item>
               </Col>
             </Row>
+
 
             <Row gutter={16} style={{ marginTop: 16 }}>
               <Col span={12}>

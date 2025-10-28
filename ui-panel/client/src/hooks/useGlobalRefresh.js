@@ -10,7 +10,7 @@
  * - 并发控制
  */
 
-import { getRefreshConfig, getComponentPriority } from '../config/refreshConfig';
+import { getRefreshConfig, getComponentPriority, getOperationRefreshConfig } from '../config/refreshConfig';
 
 class GlobalRefreshManager {
   constructor() {
@@ -21,7 +21,9 @@ class GlobalRefreshManager {
     this.autoRefreshInterval = null;
     this.refreshHistory = [];
     this.maxHistorySize = 50;
-    
+    this.activeTimeouts = new Map(); // 跟踪活跃的超时操作
+    this.operationStartTimes = new Map(); // 跟踪操作开始时间
+
     // 从配置文件加载配置
     this.config = getRefreshConfig('DEFAULT');
     this.componentPriorities = getRefreshConfig('COMPONENT_PRIORITIES');
@@ -30,6 +32,14 @@ class GlobalRefreshManager {
     if (this.debugConfig.enableRefreshTracing) {
       console.log('GlobalRefreshManager initialized with config:', this.config);
     }
+
+    // 初始化时清理可能的僵尸操作
+    this.clearZombieOperations();
+
+    // 启动定期检查僵尸操作（每5分钟）
+    this.zombieCheckInterval = setInterval(() => {
+      this.checkAndClearStaleOperations();
+    }, 5 * 60 * 1000);
   }
 
   /**
@@ -129,9 +139,31 @@ class GlobalRefreshManager {
         const componentStartTime = Date.now();
         
         try {
-          // 设置超时
+          // 动态计算超时时间 - 检查是否有操作特定的超时配置
+          let timeoutDuration = this.config.refreshTimeout; // 默认120秒
+
+          // 如果这个刷新是由特定操作触发的，使用操作特定的超时配置
+          if (options.operationType) {
+            const operationConfig = getOperationRefreshConfig(options.operationType);
+            if (operationConfig && operationConfig.timeout) {
+              timeoutDuration = operationConfig.timeout;
+              if (this.debugConfig.enableRefreshTracing) {
+                console.log(`Using operation-specific timeout for ${componentId}: ${timeoutDuration}ms (operation: ${options.operationType})`);
+              }
+            }
+          }
+
+          // 设置超时并跟踪
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(`Refresh timeout for ${componentId}`)), this.config.refreshTimeout);
+            const timeoutId = setTimeout(() => {
+              this.activeTimeouts.delete(componentId);
+              this.operationStartTimes.delete(componentId);
+              reject(new Error(`Refresh timeout for ${componentId}`));
+            }, timeoutDuration);
+
+            // 跟踪这个超时操作和开始时间
+            this.activeTimeouts.set(componentId, timeoutId);
+            this.operationStartTimes.set(componentId, componentStartTime);
           });
 
           const refreshPromise = subscriber.callback();
@@ -140,6 +172,13 @@ class GlobalRefreshManager {
           const duration = Date.now() - componentStartTime;
           subscriber.lastRefresh = new Date();
           subscriber.retryCount = 0;
+
+          // 清理成功完成的超时操作
+          if (this.activeTimeouts.has(componentId)) {
+            clearTimeout(this.activeTimeouts.get(componentId));
+            this.activeTimeouts.delete(componentId);
+            this.operationStartTimes.delete(componentId);
+          }
 
           const result = {
             componentId,
@@ -160,18 +199,33 @@ class GlobalRefreshManager {
           const duration = Date.now() - componentStartTime;
           subscriber.retryCount++;
 
+          // 检查是否是超时错误
+          const isTimeoutError = error.message.includes('timeout');
+          const isKarpenterTimeout = isTimeoutError && componentId.includes('karpenter');
+
+          if (isKarpenterTimeout && this.debugConfig.enableRefreshTracing) {
+            console.warn(`🚨 Karpenter timeout detected for ${componentId}. This might be due to a stale refresh operation.`);
+          }
+
           const errorResult = {
             componentId,
             success: false,
             error: error.message,
             duration,
             timestamp: new Date(),
-            retryCount: subscriber.retryCount
+            retryCount: subscriber.retryCount,
+            isTimeout: isTimeoutError,
+            isKarpenterTimeout: isKarpenterTimeout
           };
 
           refreshResult.errors.push(errorResult);
-          console.error(`❌ ${componentId} refresh failed (${duration}ms):`, error.message);
-          
+
+          if (isKarpenterTimeout) {
+            console.warn(`⚠️ ${componentId} refresh timeout (${duration}ms): ${error.message}`);
+          } else {
+            console.error(`❌ ${componentId} refresh failed (${duration}ms):`, error.message);
+          }
+
           return errorResult;
         }
       });
@@ -308,15 +362,122 @@ class GlobalRefreshManager {
   }
 
   /**
+   * 检查并清理过期的操作（定期调用）
+   */
+  checkAndClearStaleOperations() {
+    const now = Date.now();
+    const staleThreshold = 10 * 60 * 1000; // 10分钟
+
+    // 清理过期的活跃超时操作
+    for (const [componentId, timeoutId] of this.activeTimeouts.entries()) {
+      const startTime = this.operationStartTimes.get(componentId);
+      if (startTime && (now - startTime) > staleThreshold) {
+        clearTimeout(timeoutId);
+        this.activeTimeouts.delete(componentId);
+        this.operationStartTimes.delete(componentId);
+
+        if (this.debugConfig.enableRefreshTracing) {
+          console.log(`🧹 Cleared stale operation timeout for: ${componentId}`);
+        }
+      }
+    }
+
+    // 清理过期的刷新历史
+    this.refreshHistory = this.refreshHistory.filter(entry => {
+      const isStale = (now - entry.startTime.getTime()) > staleThreshold;
+      return !isStale;
+    });
+  }
+
+  /**
+   * 清理超时的Karpenter操作
+   */
+  clearStaleKarpenterOperations() {
+    const now = Date.now();
+    const staleThreshold = 5 * 60 * 1000; // 5分钟
+
+    this.refreshHistory = this.refreshHistory.filter(entry => {
+      const isKarpenterError = entry.errors?.some(error =>
+        error.isKarpenterTimeout || error.componentId?.includes('karpenter')
+      );
+
+      const isStale = (now - entry.startTime.getTime()) > staleThreshold;
+
+      if (isKarpenterError && isStale) {
+        if (this.debugConfig.enableRefreshTracing) {
+          console.log(`🧹 Cleaning stale Karpenter operation: ${entry.id}`);
+        }
+        return false; // 移除
+      }
+      return true; // 保留
+    });
+  }
+
+  /**
+   * 强制清除特定组件的超时状态
+   * @param {string} componentId - 组件ID
+   */
+  clearComponentTimeout(componentId) {
+    const subscriber = this.subscribers.get(componentId);
+    if (subscriber) {
+      subscriber.retryCount = 0;
+      subscriber.lastRefresh = null;
+
+      if (this.debugConfig.enableRefreshTracing) {
+        console.log(`🔄 Reset timeout state for component: ${componentId}`);
+      }
+    }
+  }
+
+  /**
+   * 清理僵尸操作 - 初始化时和手动调用
+   */
+  clearZombieOperations() {
+    // 清理所有活跃的超时操作
+    for (const [componentId, timeoutId] of this.activeTimeouts.entries()) {
+      clearTimeout(timeoutId);
+      if (this.debugConfig.enableRefreshTracing) {
+        console.log(`🧟 Cleared zombie timeout for: ${componentId}`);
+      }
+    }
+    this.activeTimeouts.clear();
+    this.operationStartTimes.clear();
+
+    // 重置刷新状态
+    this.isRefreshing = false;
+
+    // 清理历史中的错误记录
+    this.refreshHistory = this.refreshHistory.filter(entry => {
+      const hasTimeoutErrors = entry.errors?.some(error =>
+        error.error?.includes('timeout') && error.componentId?.includes('karpenter')
+      );
+      return !hasTimeoutErrors;
+    });
+
+    if (this.debugConfig.enableRefreshTracing) {
+      console.log('🧹 Zombie operations cleaned up');
+    }
+  }
+
+  /**
    * 销毁管理器
    */
   destroy() {
+    // 清理所有活跃的超时操作
+    this.clearZombieOperations();
+
     if (this.autoRefreshInterval) {
       clearInterval(this.autoRefreshInterval);
     }
-    
+
+    // 清理僵尸检查定时器
+    if (this.zombieCheckInterval) {
+      clearInterval(this.zombieCheckInterval);
+    }
+
     this.subscribers.clear();
     this.refreshHistory = [];
+    this.operationStartTimes.clear();
     if (this.debugConfig.enableRefreshTracing) {
       console.log('GlobalRefreshManager destroyed');
     }
@@ -329,6 +490,11 @@ const globalRefreshManager = new GlobalRefreshManager();
 // 开发环境下暴露到window对象，便于调试
 if (process.env.NODE_ENV === 'development') {
   window.globalRefreshManager = globalRefreshManager;
+  // 暴露紧急清理方法
+  window.clearKarpenterTimeout = () => {
+    globalRefreshManager.clearZombieOperations();
+    console.log('🚑 Emergency cleanup executed');
+  };
 }
 
 export default globalRefreshManager;

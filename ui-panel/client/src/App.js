@@ -16,7 +16,7 @@ import S3StoragePanel from './components/S3StoragePanel';
 import HyperPodJobManager from './components/HyperPodJobManager';
 import ClusterManagement from './components/ClusterManagementRedux';
 import GlobalRefreshButtonRedux from './components/GlobalRefreshButtonRedux';
-import OperationFeedback from './components/OperationFeedback';
+// import OperationFeedback from './components/OperationFeedback'; // 已移除：右上角详细卡片
 import EnhancedModelManagement from './components/EnhancedModelManagement';
 // 🎨 PREVIEW ONLY - Remove this import to clean up preview
 import AdvancedScalingPanelV2 from './components/AdvancedScalingPanelV2';
@@ -219,22 +219,22 @@ function App() {
 
           case 'karpenter_installation_completed':
             message.success('Karpenter installation completed successfully');
-            operationRefreshManager.triggerOperationRefresh('karpenter-install', data);
+            // 简化：不触发复杂刷新，用户会自然地刷新页面查看结果
             break;
 
           case 'karpenter_installation_failed':
             message.error('Karpenter installation failed');
-            operationRefreshManager.triggerOperationRefresh('karpenter-install', data);
+            // 简化：不触发复杂刷新，用户会自然地刷新页面查看结果
             break;
 
           case 'karpenter_uninstallation_completed':
             message.success('Karpenter uninstallation completed successfully');
-            operationRefreshManager.triggerOperationRefresh('karpenter-uninstall', data);
+            // 简化：不触发复杂刷新，用户会自然地刷新页面查看结果
             break;
 
           case 'karpenter_uninstallation_failed':
             message.error('Karpenter uninstallation failed');
-            operationRefreshManager.triggerOperationRefresh('karpenter-uninstall', data);
+            // 简化：不触发复杂刷新，用户会自然地刷新页面查看结果
             break;
 
           case 'undeployment':
@@ -1031,8 +1031,7 @@ function App() {
         </Row>
       </Content>
       
-      {/* 操作反馈组件 */}
-      <OperationFeedback />
+      {/* 操作反馈组件 - 已移除右上角详细卡片，保留顶部message提示 */}
     </Layout>
     </ThemeProvider>
   );

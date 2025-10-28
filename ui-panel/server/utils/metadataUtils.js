@@ -202,6 +202,52 @@ class MetadataUtils {
       return false;
     }
   }
+
+  /**
+   * 获取子网实例类型缓存文件路径
+   */
+  static getSubnetInstanceTypesCachePath(clusterTag, subnetId) {
+    return path.join(this.getMetadataDir(clusterTag), `subnet_instances_${subnetId}.json`);
+  }
+
+  /**
+   * 保存子网特定的实例类型缓存
+   */
+  static saveSubnetInstanceTypesCache(clusterTag, subnetId, cacheData) {
+    try {
+      const cachePath = this.getSubnetInstanceTypesCachePath(clusterTag, subnetId);
+
+      // 确保metadata目录存在
+      const metadataDir = this.getMetadataDir(clusterTag);
+      if (!fs.existsSync(metadataDir)) {
+        fs.mkdirSync(metadataDir, { recursive: true });
+      }
+
+      fs.writeFileSync(cachePath, JSON.stringify(cacheData, null, 2));
+      console.log(`Subnet instance types cache saved for cluster: ${clusterTag}, subnet: ${subnetId}`);
+      return true;
+    } catch (error) {
+      console.error(`Error saving subnet instance types cache for ${clusterTag}, subnet ${subnetId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 读取子网特定的实例类型缓存
+   */
+  static getSubnetInstanceTypesCache(clusterTag, subnetId) {
+    try {
+      const cachePath = this.getSubnetInstanceTypesCachePath(clusterTag, subnetId);
+      if (fs.existsSync(cachePath)) {
+        return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      }
+      return null;
+    } catch (error) {
+      console.error(`Error reading subnet instance types cache for ${clusterTag}, subnet ${subnetId}:`, error);
+      return null;
+    }
+  }
+
   /**
    * 通过AWS CLI获取导入集群的资源信息（包含HyperPod子网）
    */

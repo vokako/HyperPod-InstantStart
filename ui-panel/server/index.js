@@ -699,7 +699,7 @@ app.post('/api/deploy', async (req, res) => {
     
     console.log(`Generated deployment tag: "${finalDeploymentTag}"`);
 
-    let templatePath, newYamlContent;
+    let templatePath, newYamlContent, servEngine;
 
     // 生成NLB注解
     const nlbAnnotations = generateNLBAnnotations(isExternal);
@@ -725,7 +725,6 @@ app.post('/api/deploy', async (req, res) => {
       console.log('Parsed command:', parsedCommand);
       
       // 根据命令类型确定服务引擎前缀
-      let servEngine;
       if (parsedCommand.commandType === 'sglang') {
         servEngine = 'sglang';
       } else if (parsedCommand.commandType === 'vllm') {
@@ -776,7 +775,9 @@ app.post('/api/deploy', async (req, res) => {
     
     const accessType = isExternal ? 'external' : 'internal';
     const poolType = deployAsPool ? 'pool' : 'standard';
-    const tempYamlPath = path.join(deploymentsDir, `${finalDeploymentTag}-${deploymentType}-${poolType}-${accessType}.yaml`);
+    // 使用实际的引擎类型：ollama使用deploymentType，container使用解析出的servEngine
+    const actualEngineType = deploymentType === 'ollama' ? 'ollama' : servEngine;
+    const tempYamlPath = path.join(deploymentsDir, `${finalDeploymentTag}-${actualEngineType}-${poolType}-${accessType}.yaml`);
     await fs.writeFile(tempYamlPath, newYamlContent);
     
     console.log(`Generated YAML saved to: ${tempYamlPath}`);
@@ -802,7 +803,7 @@ app.post('/api/deploy', async (req, res) => {
       output: applyOutput,
       yamlPath: tempYamlPath,
       generatedYaml: newYamlContent,
-      deploymentType,
+      deploymentType: deploymentType === 'ollama' ? 'ollama' : servEngine,
       deploymentTag: finalDeploymentTag,
       accessType
     });
@@ -7236,7 +7237,7 @@ app.post('/api/aws/instance-types/refresh', async (req, res) => {
       lastUpdated: new Date().toISOString(),
       instanceTypes: instanceTypes,
       error: errors.length > 0 ? errors.join('; ') : null,
-      familiesRequested: familyFilter,
+      familiesRequested: ['g5', 'g6', 'g6e', 'p4', 'p5', 'p5e', 'p5en', 'p6'],
       totalFound: instanceTypes.length
     };
 
@@ -7273,6 +7274,184 @@ app.post('/api/aws/instance-types/refresh', async (req, res) => {
 
   } catch (error) {
     console.error('Error refreshing instance types:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 🎨 Subnet-aware Instance Types API (基于子网的实例类型获取)
+app.post('/api/aws/instance-types/by-subnet', async (req, res) => {
+  try {
+    const { subnetId } = req.body;
+
+    if (!subnetId) {
+      return res.status(400).json({
+        success: false,
+        error: 'subnetId is required'
+      });
+    }
+
+    // Get current active cluster
+    const ClusterManager = require('./cluster-manager');
+    const clusterManager = new ClusterManager();
+    const activeClusterName = clusterManager.getActiveCluster();
+
+    if (!activeClusterName) {
+      return res.status(400).json({
+        success: false,
+        error: 'No active cluster configured. Please select a cluster first.'
+      });
+    }
+
+    console.log(`Fetching instance types for subnet: ${subnetId}, cluster: ${activeClusterName}`);
+
+    // Get subnet's availability zone
+    const getSubnetAZCmd = `aws ec2 describe-subnets --subnet-ids ${subnetId} --query "Subnets[0].AvailabilityZone" --output text`;
+    const availabilityZone = execSync(getSubnetAZCmd, { encoding: 'utf8', timeout: 10000 }).trim();
+
+    if (!availabilityZone || availabilityZone === 'None') {
+      return res.status(400).json({
+        success: false,
+        error: `Subnet ${subnetId} not found or invalid`
+      });
+    }
+
+    console.log(`Subnet ${subnetId} is in availability zone: ${availabilityZone}`);
+
+    // Get current AWS region
+    const currentRegion = AWSHelpers.getCurrentRegion();
+
+    let instanceTypes = [];
+    let errors = [];
+
+    try {
+      console.log(`🔍 Optimized fetch: Getting all GPU instances available in ${availabilityZone}`);
+
+      // Step 1: 一次性获取该AZ所有可用的GPU实例类型 (更高效！)
+      const azCmd = `aws ec2 describe-instance-type-offerings --location-type availability-zone --filters "Name=location,Values=${availabilityZone}" --query "InstanceTypeOfferings[?starts_with(InstanceType, 'g5.') || starts_with(InstanceType, 'g6.') || starts_with(InstanceType, 'g6e.') || starts_with(InstanceType, 'p4.') || starts_with(InstanceType, 'p5.') || starts_with(InstanceType, 'p5e.') || starts_with(InstanceType, 'p5en.') || starts_with(InstanceType, 'p6-b200.')].InstanceType" --region ${currentRegion} --output json`;
+
+      const azOutput = execSync(azCmd, { encoding: 'utf8', timeout: 15000 });
+      const availableInstanceTypeNames = JSON.parse(azOutput);
+
+      console.log(`📊 Found ${availableInstanceTypeNames.length} GPU instance types available in ${availabilityZone}`);
+      if (availableInstanceTypeNames.length > 0) {
+        console.log(`🎯 Sample instances:`, availableInstanceTypeNames.slice(0, 5).join(', ') + (availableInstanceTypeNames.length > 5 ? '...' : ''));
+      }
+
+      if (availableInstanceTypeNames.length === 0) {
+        console.warn(`⚠️ No GPU instance types found in ${availabilityZone}`);
+        instanceTypes = [];
+      } else {
+        // Step 2: 获取这些实例类型的详细信息 (批量查询更高效)
+        console.log(`📋 Getting detailed info for ${availableInstanceTypeNames.length} instance types...`);
+        const detailsCmd = `aws ec2 describe-instance-types --region ${currentRegion} --instance-types ${availableInstanceTypeNames.join(' ')} --query "InstanceTypes[?GpuInfo.Gpus].{InstanceType:InstanceType,VCpuInfo:VCpuInfo,MemoryInfo:MemoryInfo,GpuInfo:GpuInfo}" --output json`;
+
+        const detailsOutput = execSync(detailsCmd, { encoding: 'utf8', timeout: 25000 });
+        const instanceDetails = JSON.parse(detailsOutput);
+
+        // Step 3: 转换为我们的格式
+        instanceTypes = instanceDetails
+          .filter(type => type.GpuInfo && type.GpuInfo.Gpus && type.GpuInfo.Gpus.length > 0)
+          .map(type => {
+            const gpuInfo = type.GpuInfo.Gpus[0];
+            const gpuCount = type.GpuInfo.Gpus.reduce((sum, gpu) => sum + (gpu.Count || 1), 0);
+            const gpuName = gpuInfo.Name || 'GPU';
+
+            // 确定实例系列
+            let family = 'other';
+            if (type.InstanceType.startsWith('g5.')) family = 'g5';
+            else if (type.InstanceType.startsWith('g6e.')) family = 'g6e';
+            else if (type.InstanceType.startsWith('g6.')) family = 'g6';
+            else if (type.InstanceType.startsWith('p4.')) family = 'p4';
+            else if (type.InstanceType.startsWith('p5en.')) family = 'p5en';
+            else if (type.InstanceType.startsWith('p5e.')) family = 'p5e';
+            else if (type.InstanceType.startsWith('p5.')) family = 'p5';
+            else if (type.InstanceType.startsWith('p6-b200.')) family = 'p6';
+
+            return {
+              value: type.InstanceType,
+              label: type.InstanceType,
+              family: family,
+              vcpu: type.VCpuInfo.DefaultVCpus,
+              memory: Math.round(type.MemoryInfo.SizeInMiB / 1024), // Convert to GB
+              gpu: gpuCount > 1 ? `${gpuCount}x ${gpuName}` : `1x ${gpuName}`,
+              availabilityZone: availabilityZone,
+              subnetId: subnetId
+            };
+          })
+          .sort((a, b) => {
+            // 先按系列排序，再按大小排序
+            if (a.family !== b.family) {
+              const familyOrder = ['g5', 'g6', 'g6e', 'p4', 'p5', 'p5e', 'p5en', 'p6'];
+              return familyOrder.indexOf(a.family) - familyOrder.indexOf(b.family);
+            }
+
+            // 同系列内按实例大小排序
+            const getSize = (instanceType) => {
+              const match = instanceType.match(/(\d*)xlarge/);
+              return match ? (match[1] ? parseInt(match[1]) : 1) : 0;
+            };
+            return getSize(a.value) - getSize(b.value);
+          });
+
+        console.log(`✅ Successfully processed ${instanceTypes.length} GPU instance types for ${availabilityZone}`);
+
+        // 按系列统计
+        const familyCount = {};
+        instanceTypes.forEach(it => familyCount[it.family] = (familyCount[it.family] || 0) + 1);
+        console.log(`📈 Instance distribution:`, Object.entries(familyCount).map(([family, count]) => `${family}:${count}`).join(', '));
+      }
+    } catch (error) {
+      console.error(`❌ Error in optimized fetch for ${availabilityZone}:`, error.message);
+      instanceTypes = [];
+      errors = [error.message];
+    }
+
+    // Save to metadata cache with subnet key
+    const MetadataUtils = require('./utils/metadataUtils');
+    const cacheData = {
+      subnetId: subnetId,
+      availabilityZone: availabilityZone,
+      region: currentRegion,
+      lastUpdated: new Date().toISOString(),
+      instanceTypes: instanceTypes,
+      error: errors.length > 0 ? errors.join('; ') : null,
+      familiesRequested: ['g5', 'g6', 'g6e', 'p4', 'p5', 'p5e', 'p5en', 'p6'],
+      totalFound: instanceTypes.length
+    };
+
+    // Save to subnet-specific cache file
+    const saved = MetadataUtils.saveSubnetInstanceTypesCache(activeClusterName, subnetId, cacheData);
+
+    if (instanceTypes.length > 0) {
+      console.log(`Successfully fetched ${instanceTypes.length} instance types for subnet: ${subnetId}`);
+      res.json({
+        success: true,
+        subnetId: subnetId,
+        availabilityZone: availabilityZone,
+        region: currentRegion,
+        instanceTypes: instanceTypes,
+        lastUpdated: cacheData.lastUpdated,
+        totalFound: instanceTypes.length,
+        cached: saved,
+        errors: errors.length > 0 ? errors : null
+      });
+    } else {
+      const errorMessage = errors.length > 0 ? errors.join('; ') : `No GPU instance types found in subnet ${subnetId} (${availabilityZone})`;
+      console.error(`No instance types found for subnet: ${subnetId}, errors: ${errorMessage}`);
+      res.status(404).json({
+        success: false,
+        error: errorMessage,
+        subnetId: subnetId,
+        availabilityZone: availabilityZone,
+        region: currentRegion
+      });
+    }
+
+  } catch (error) {
+    console.error('Error fetching instance types by subnet:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -7825,6 +8004,58 @@ app.post('/api/cluster/karpenter/unified-resources', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// 获取 HyperPod 计算节点所在的子网
+app.get('/api/cluster/karpenter/hyperpod-subnets', async (req, res) => {
+  try {
+    const activeCluster = clusterManager.getActiveCluster();
+    const subnets = await KarpenterManager.getHyperPodComputeSubnets(activeCluster, clusterManager);
+
+    // 获取子网的详细信息（名称和AZ）
+    const subnetDetails = [];
+    if (subnets && subnets.length > 0) {
+      for (const subnetId of subnets) {
+        try {
+          const cmd = `aws ec2 describe-subnets --subnet-ids ${subnetId} --query 'Subnets[0].[SubnetId,AvailabilityZone,Tags[?Key==\`Name\`].Value|[0]]' --output text`;
+          const result = execSync(cmd, { encoding: 'utf8', timeout: 15000 }).trim();
+          const [id, az, name] = result.split('\t');
+          subnetDetails.push({
+            subnetId: id,
+            availabilityZone: az,
+            name: name || `subnet-${az}`,
+            displayName: `${name || id} (${az})`
+          });
+        } catch (error) {
+          console.warn(`Failed to get details for subnet ${subnetId}:`, error.message);
+          subnetDetails.push({
+            subnetId: subnetId,
+            availabilityZone: 'unknown',
+            name: subnetId,
+            displayName: `${subnetId} (unknown AZ)`
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        subnets: subnetDetails,
+        count: subnetDetails.length
+      }
+    });
+  } catch (error) {
+    console.error('Error getting HyperPod compute subnets:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      data: {
+        subnets: [],
+        count: 0
+      }
     });
   }
 });

@@ -1,52 +1,52 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 
-// 异步操作：获取 Pods 状态
+// 异步操作：获取 Pods 状态 (使用V2 API)
 export const fetchPods = createAsyncThunk(
   'appStatus/fetchPods',
   async (_, { rejectWithValue }) => {
     try {
-      console.log('Fetching pods status via Redux...');
-      const response = await fetch('/api/pods');
+      console.log('Fetching pods status via Redux V2...');
+      const response = await fetch('/api/v2/app-status');
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('Pods status response:', data);
+      console.log('Pods V2 status response:', data);
 
       return {
-        pods: data.items || [],
+        pods: data.rawPods || data.pods || [],
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error('Error fetching pods:', error);
+      console.error('Error fetching pods V2:', error);
       return rejectWithValue(error.message);
     }
   }
 );
 
-// 异步操作：获取 Services 状态
+// 异步操作：获取 Services 状态 (使用V2 API)
 export const fetchServices = createAsyncThunk(
   'appStatus/fetchServices',
   async (_, { rejectWithValue }) => {
     try {
-      console.log('Fetching services status via Redux...');
-      const response = await fetch('/api/services');
+      console.log('Fetching services status via Redux V2...');
+      const response = await fetch('/api/v2/app-status');
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('Services status response:', data);
+      console.log('Services V2 status response:', data);
 
       return {
-        services: data.items || [],
+        services: data.rawServices || data.services || [],
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error('Error fetching services:', error);
+      console.error('Error fetching services V2:', error);
       return rejectWithValue(error.message);
     }
   }
@@ -104,14 +104,44 @@ export const fetchBusinessServices = createAsyncThunk(
   }
 );
 
-// 组合操作：刷新所有应用状态
+// 新增：使用V2 API的优化组合获取
+export const fetchAppStatusV2 = createAsyncThunk(
+  'appStatus/fetchAppStatusV2',
+  async (_, { rejectWithValue }) => {
+    try {
+      console.log('Fetching app status via V2 API...');
+      const response = await fetch('/api/v2/app-status');
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('App Status V2 response:', data);
+
+      return {
+        pods: data.rawPods || data.pods || [],
+        services: data.rawServices || data.services || [],
+        timestamp: new Date().toISOString(),
+        stats: data.stats || null,
+        fetchTime: data.fetchTime || null,
+        version: 'v2'
+      };
+    } catch (error) {
+      console.error('Error fetching app status V2:', error);
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
+// 组合操作：刷新所有应用状态 (优化版本)
 export const refreshAllAppStatus = createAsyncThunk(
   'appStatus/refreshAllAppStatus',
   async (_, { dispatch, rejectWithValue }) => {
     try {
+      // 使用V2 API获取pods和services，其他资源单独获取
       const results = await Promise.allSettled([
-        dispatch(fetchPods()).unwrap(),
-        dispatch(fetchServices()).unwrap(),
+        dispatch(fetchAppStatusV2()).unwrap(),
         dispatch(fetchRayJobs()).unwrap(),
         dispatch(fetchBusinessServices()).unwrap()
       ]);
@@ -119,13 +149,12 @@ export const refreshAllAppStatus = createAsyncThunk(
       const errors = [];
       results.forEach((result, index) => {
         if (result.status === 'rejected') {
-          const operations = ['Pods', 'Services', 'RayJobs', 'Business Services'];
+          const operations = ['App Status V2', 'RayJobs', 'Business Services'];
           errors.push(`${operations[index]}: ${result.reason}`);
         }
       });
 
       if (errors.length > 0) {
-        // 部分失败也返回成功，只记录错误
         console.warn('Some app status operations failed:', errors);
       }
 
@@ -304,8 +333,38 @@ const appStatusSlice = createSlice({
     }
   },
   extraReducers: (builder) => {
-    // 处理获取 Pods
+    // 处理V2 API组合获取
     builder
+      .addCase(fetchAppStatusV2.pending, (state) => {
+        state.podsLoading = true;
+        state.servicesLoading = true;
+        state.podsError = null;
+        state.servicesError = null;
+      })
+      .addCase(fetchAppStatusV2.fulfilled, (state, action) => {
+        state.podsLoading = false;
+        state.servicesLoading = false;
+        state.pods = action.payload.pods;
+        state.services = action.payload.services;
+        state.lastPodsUpdate = action.payload.timestamp;
+        state.lastServicesUpdate = action.payload.timestamp;
+
+        console.log('Redux: Updated pods and services from V2 API:', {
+          podsCount: state.pods.length,
+          servicesCount: state.services.length
+        });
+
+        // 自动更新统计信息
+        appStatusSlice.caseReducers.updateStats(state);
+      })
+      .addCase(fetchAppStatusV2.rejected, (state, action) => {
+        state.podsLoading = false;
+        state.servicesLoading = false;
+        state.podsError = action.payload;
+        state.servicesError = action.payload;
+      })
+
+    // 处理获取 Pods (保留向后兼容)
       .addCase(fetchPods.pending, (state) => {
         state.podsLoading = true;
         state.podsError = null;
@@ -323,7 +382,7 @@ const appStatusSlice = createSlice({
         state.podsError = action.payload;
       })
 
-    // 处理获取 Services
+    // 处理获取 Services (保留向后兼容)
       .addCase(fetchServices.pending, (state) => {
         state.servicesLoading = true;
         state.servicesError = null;

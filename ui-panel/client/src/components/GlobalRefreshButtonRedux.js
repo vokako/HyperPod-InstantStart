@@ -238,7 +238,7 @@ const GlobalRefreshButtonRedux = ({
     </div>
   );
 
-  // 主按钮 - 简洁样式
+  // 主按钮 - 透明背景，白色文字和边框，与标题栏统一
   const refreshButton = (
     <Button
       type={isRefreshing ? 'primary' : 'default'}
@@ -249,9 +249,9 @@ const GlobalRefreshButtonRedux = ({
       disabled={isRefreshing}
       style={{
         ...style,
-        backgroundColor: isRefreshing ? undefined : 'rgba(255, 255, 255, 0.9)',
-        borderColor: isRefreshing ? undefined : 'rgba(255, 255, 255, 0.9)',
-        color: isRefreshing ? undefined : '#333'
+        backgroundColor: isRefreshing ? undefined : 'transparent',
+        borderColor: isRefreshing ? undefined : 'rgba(255, 255, 255, 0.65)',
+        color: isRefreshing ? undefined : '#ffffff'
       }}
     >
       Refresh
