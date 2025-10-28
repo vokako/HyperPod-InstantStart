@@ -226,11 +226,9 @@ Resources:
           echo "$S3_BUCKET_NAME /home/ubuntu/workspace/s3 fuse.s3fs _netdev,user,iam_role=${EKSPlusHYPDAdminRole},allow_other,uid=1000,gid=1000 0 0" >> /etc/fstab
 
           sudo -u ubuntu s3fs $S3_BUCKET_NAME /home/ubuntu/workspace/s3 -o iam_role=${EKSPlusHYPDAdminRole},allow_other,uid=1000,gid=1000
-          
-          sudo -u ubuntu touch /home/ubuntu/workspace/s3/CURRENT_BUCKET_$S3_BUCKET_NAME
-          
-          sudo -u ubuntu bash -c "echo '{\"bucketName\":\"'$S3_BUCKET_NAME'\",\"awsRegion\":\"${AWS::Region}\",\"createTime\":\"'\$(date -Iseconds)'\"}' > /home/ubuntu/workspace/s3/CURRENT_BUCKET_INFO"
 
+          # sudo -u ubuntu bash -c "echo '{\"bucketName\":\"'$S3_BUCKET_NAME'\",\"awsRegion\":\"${AWS::Region}\",\"createTime\":\"'\$(date -Iseconds)'\"}' > /home/ubuntu/workspace/s3/CURRENT_BUCKET_INFO"
+          sudo -u ubuntu bash -c 'echo "{\"bucketName\":\"'$S3_BUCKET_NAME'\",\"awsRegion\":\"${AWS::Region}\",\"createTime\":\"$(date -Iseconds)\"}" > /home/ubuntu/workspace/s3/CURRENT_BUCKET_INFO'
           chown -R ubuntu:ubuntu /home/ubuntu
           
           echo "Installation completed at $(date)"

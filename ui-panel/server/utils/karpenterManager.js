@@ -862,7 +862,7 @@ class KarpenterManager {
    */
   static async getNodeClasses() {
     try {
-      const cmd = 'kubectl get nodeclass -o json';
+      const cmd = 'kubectl get ec2nodeclass -o json';
       const result = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
       const nodeClasses = JSON.parse(result);
 
@@ -897,7 +897,7 @@ class KarpenterManager {
         throw new Error(`Cannot delete NodeClass ${name}. It is referenced by NodePools: ${dependentPools.map(np => np.name).join(', ')}`);
       }
 
-      const cmd = `kubectl delete nodeclass ${name}`;
+      const cmd = `kubectl delete ec2nodeclass ${name}`;
       execSync(cmd, { encoding: 'utf8', timeout: 30000 });
 
       return {
@@ -1046,7 +1046,7 @@ class KarpenterManager {
       // 如果有关联的 NodeClass，也删除它
       if (nodeClassRef) {
         try {
-          const deleteNodeClassCmd = `kubectl delete nodeclass ${nodeClassRef}`;
+          const deleteNodeClassCmd = `kubectl delete ec2nodeclass ${nodeClassRef}`;
           execSync(deleteNodeClassCmd, { encoding: 'utf8', timeout: 30000 });
           console.log(`Successfully deleted associated NodeClass: ${nodeClassRef}`);
         } catch (error) {
@@ -1228,7 +1228,7 @@ description: "Medium priority for pods on spot nodes"
 
     for (let i = 0; i < maxRetries; i++) {
       try {
-        const cmd = `kubectl get nodeclass ${name}`;
+        const cmd = `kubectl get ec2nodeclass ${name}`;
         execSync(cmd, { encoding: 'utf8', timeout: 10000 });
         console.log(`NodeClass ${name} found on attempt ${i + 1}`);
         return true;

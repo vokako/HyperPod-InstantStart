@@ -4094,12 +4094,15 @@ app.get('/api/s3-storage-defaults', async (req, res) => {
     // 从容器中的 /s3-workspace-metadata 路径读取默认bucket
     try {
       const metadataPath = '/s3-workspace-metadata';
-      if (fs.existsSync(metadataPath)) {
-        const files = fs.readdirSync(metadataPath);
-        const bucketFile = files.find(file => file.startsWith('CURRENT_BUCKET_'));
-        if (bucketFile) {
-          defaultBucket = bucketFile.replace('CURRENT_BUCKET_', '');
-        }
+      const bucketInfoPath = path.join(metadataPath, 'CURRENT_BUCKET_INFO');
+
+      if (fs.existsSync(bucketInfoPath)) {
+        const bucketInfoContent = fs.readFileSync(bucketInfoPath, 'utf8');
+        const bucketInfo = JSON.parse(bucketInfoContent);
+        defaultBucket = bucketInfo.bucketName;
+        console.log('Successfully read bucket info from CURRENT_BUCKET_INFO:', bucketInfo.bucketName);
+      } else {
+        console.log('CURRENT_BUCKET_INFO file not found at:', bucketInfoPath);
       }
     } catch (error) {
       console.log('Could not read s3-workspace-metadata:', error.message);
