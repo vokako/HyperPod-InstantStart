@@ -677,7 +677,9 @@ app.post('/api/deploy', async (req, res) => {
       serviceType = 'external',  // 新增：服务类型 ('external', 'clusterip', 'modelpool')
       deploymentName,  // 用户输入的部署名称
       dockerImage = 'vllm/vllm-openai:latest',
-      port = 8000  // 端口配置，默认8000
+      port = 8000,  // 端口配置，默认8000
+      cpuRequest = 4,  // CPU请求，默认4核
+      memoryRequest = 16  // 内存请求，默认16Gi
     } = req.body;
 
     console.log('Inference deployment request:', {
@@ -687,7 +689,10 @@ app.post('/api/deploy', async (req, res) => {
       replicas,
       instanceTypes,
       serviceType,
-      dockerImage
+      dockerImage,
+      cpuRequest,
+      memoryRequest,
+      port
     });
 
     // 生成带时间戳的唯一标签（符合Kubernetes命名规范）
@@ -696,8 +701,12 @@ app.post('/api/deploy', async (req, res) => {
       .replace('T', '-')         // 替换T为连字符
       .slice(0, 19);             // 截取到秒级
     const finalDeploymentTag = deploymentName ? `${deploymentName}-${timestamp}` : `model-${timestamp}`;
-    
+
     console.log(`Generated deployment tag: "${finalDeploymentTag}"`);
+
+    // 根据serviceType确定是否为模型池部署
+    const deployAsPool = (serviceType === 'modelpool');
+    console.log(`Deploy as pool: ${deployAsPool} (serviceType: ${serviceType})`);
 
     let templatePath, newYamlContent, servEngine;
 
@@ -792,6 +801,8 @@ app.post('/api/deploy', async (req, res) => {
         .replace(/ENTRY_CMD/g, JSON.stringify(parsedCommand.fullCommand))
         .replace(/DOCKER_IMAGE/g, dockerImage)
         .replace(/PORT_NUMBER/g, port || 8000)
+        .replace(/CPU_REQUEST/g, cpuRequest.toString())
+        .replace(/MEMORY_REQUEST/g, memoryRequest.toString())
         .replace(/NLB_ANNOTATIONS/g, nlbAnnotations);
 
       // 使用EKSServiceHelper生成Service YAML

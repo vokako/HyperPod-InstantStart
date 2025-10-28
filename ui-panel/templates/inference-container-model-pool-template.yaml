@@ -28,9 +28,11 @@ spec:
           resources:
             limits:
               nvidia.com/gpu: GPU_COUNT
+              cpu: "CPU_REQUEST"
+              memory: MEMORY_REQUESTGi
             requests:
-              # cpu: "4"
-              # memory: 8Gi
+              cpu: "CPU_REQUEST"
+              memory: MEMORY_REQUESTGi
               nvidia.com/gpu: GPU_COUNT
           command: ENTRY_CMD
           ports:

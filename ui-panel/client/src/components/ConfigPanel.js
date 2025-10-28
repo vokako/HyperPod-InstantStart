@@ -243,7 +243,9 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
         deploymentName: '',
         dockerImage: '', // 改为空，用户必须选择
         deploymentCommand: '', // 命令也为空，等待用户选择镜像后自动填充
-        port: 8000 // 添加端口默认值
+        port: 8000, // 添加端口默认值
+        cpuRequest: 4, // 添加CPU默认值
+        memoryRequest: 16 // 添加Memory默认值
       }}
     >
       <Row gutter={16}>
@@ -411,6 +413,46 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
           style={{ fontFamily: 'monospace', fontSize: '12px' }}
         />
       </Form.Item>
+
+      {/* CPU和Memory资源配置 */}
+      <Row gutter={16}>
+        <Col span={12}>
+          <Form.Item
+            label="CPU Request"
+            name="cpuRequest"
+            rules={[
+              { required: true, message: 'Please input CPU request!' },
+              { type: 'number', min: 1, max: 32, message: 'CPU must be between 1 and 32 cores' }
+            ]}
+          >
+            <InputNumber
+              min={1}
+              max={32}
+              addonAfter="cores"
+              style={{ width: '100%' }}
+              placeholder="4"
+            />
+          </Form.Item>
+        </Col>
+        <Col span={12}>
+          <Form.Item
+            label="Memory Request"
+            name="memoryRequest"
+            rules={[
+              { required: true, message: 'Please input memory request!' },
+              { type: 'number', min: 1, max: 512, message: 'Memory must be between 1 and 512 Gi' }
+            ]}
+          >
+            <InputNumber
+              min={1}
+              max={512}
+              addonAfter="Gi"
+              style={{ width: '100%' }}
+              placeholder="16"
+            />
+          </Form.Item>
+        </Col>
+      </Row>
 
       <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f0f9ff', borderRadius: 6 }}>
         <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: 8 }}>
