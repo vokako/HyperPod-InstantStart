@@ -17,7 +17,7 @@ const S3StoragePanel = ({ selectedStorage = 'default' }) => {
       console.log(`Fetching S3 storage data for: ${selectedStorage}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
       
       const response = await fetch(`/api/s3-storage?storage=${selectedStorage}`, {
         signal: controller.signal
@@ -40,13 +40,16 @@ const S3StoragePanel = ({ selectedStorage = 'default' }) => {
     } catch (error) {
       if (error.name === 'AbortError') {
         console.warn('S3 data fetch timeout');
-        message.warning('S3 data fetch timeout, please try again');
+        message.warning('S3 data fetch timeout, but keeping existing data. Try refresh again.');
+        // 保持现有数据，不清空
+        return;
       } else {
         console.error('Error fetching S3 data:', error);
         message.error('Failed to fetch S3 storage information');
+        // 只在真正失败时清空数据
+        setS3Data([]);
+        setBucketInfo(null);
       }
-      setS3Data([]);
-      setBucketInfo(null);
     } finally {
       setLoading(false);
     }
@@ -54,16 +57,20 @@ const S3StoragePanel = ({ selectedStorage = 'default' }) => {
 
   useEffect(() => {
     fetchS3Data();
-    
-    // 暂时移除全局刷新订阅，避免超时问题
-    // const unsubscribe = globalRefreshManager.subscribe(async () => {
-    //   console.log('🔄 S3 Storage Panel: Global refresh triggered');
-    //   await fetchS3Data();
-    // });
-    
-    // return () => {
-    //   unsubscribe();
-    // };
+
+    // 恢复全局刷新订阅，使用更长超时和较低优先级
+    const componentId = globalRefreshManager.subscribe('s3-storage', async () => {
+      console.log('🔄 S3 Storage Panel: Global refresh triggered');
+      await fetchS3Data();
+    }, {
+      priority: 7,        // 较低优先级，避免阻塞其他组件
+      timeout: 35000,     // 35秒超时，比前端超时更长
+      enabled: true
+    });
+
+    return () => {
+      globalRefreshManager.unsubscribe(componentId);
+    };
   }, [selectedStorage]);
 
   const formatFileSize = (bytes) => {

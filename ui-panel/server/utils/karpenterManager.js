@@ -679,8 +679,12 @@ class KarpenterManager {
         this.log(logFile, `Helm uninstall error: ${error.message}`);
       }
 
-      // 步骤3: 删除CloudFormation stack (现在应该成功)
-      this.log(logFile, 'Step 3: Deleting Karpenter CloudFormation stack...');
+      // 步骤3: 删除Karpenter创建的instance profiles
+      this.log(logFile, 'Step 3: Deleting Karpenter instance profiles...');
+      await this.cleanupKarpenterInstanceProfiles(stackInfo, logFile);
+
+      // 步骤4: 删除CloudFormation stack (现在应该成功)
+      this.log(logFile, 'Step 4: Deleting Karpenter CloudFormation stack...');
       try {
         const stackName = `Karpenter-${stackInfo.EKS_CLUSTER_NAME}`;
         const deleteStackCmd = `aws cloudformation delete-stack --stack-name "${stackName}"`;
@@ -696,12 +700,12 @@ class KarpenterManager {
         this.log(logFile, `CloudFormation stack deletion error: ${error.message}`);
       }
 
-      // 步骤4: Post-cleanup - 清理残留资源
-      this.log(logFile, 'Step 4: Cleaning up remaining resources...');
+      // 步骤5: Post-cleanup - 清理残留资源
+      this.log(logFile, 'Step 5: Cleaning up remaining resources...');
       await this.cleanupRemainingResources(stackInfo, logFile);
 
-      // 步骤5: 更新metadata
-      this.log(logFile, 'Step 5: Updating cluster metadata...');
+      // 步骤6: 更新metadata
+      this.log(logFile, 'Step 6: Updating cluster metadata...');
       await this.removeKarpenterFromMetadata(clusterTag, clusterManager);
 
       // 复制日志到集群目录
@@ -796,6 +800,40 @@ class KarpenterManager {
 
     } catch (error) {
       this.log(logFile, `Error in cleanupManualIAMBindings: ${error.message}`);
+      // 不抛出错误，继续后续步骤
+    }
+  }
+
+  /**
+   * 删除Karpenter创建的instance profiles
+   * @param {Object} stackInfo - 基础设施信息
+   * @param {string} logFile - 日志文件路径
+   */
+  static async cleanupKarpenterInstanceProfiles(stackInfo, logFile) {
+    try {
+      // 构造Karpenter instance profiles的路径前缀
+      const pathPrefix = `/karpenter/${stackInfo.REGION}/${stackInfo.EKS_CLUSTER_NAME}/`;
+      this.log(logFile, `Deleting Karpenter instance profiles with path prefix: ${pathPrefix}`);
+
+      // 使用单一命令：列出并删除所有Karpenter instance profiles
+      const deleteCmd = `aws iam list-instance-profiles --path-prefix "${pathPrefix}" --query 'InstanceProfiles[].InstanceProfileName' --output text | xargs -n1 aws iam delete-instance-profile --instance-profile-name`;
+      this.log(logFile, `Executing: ${deleteCmd}`);
+
+      try {
+        const result = execSync(deleteCmd, { encoding: 'utf8', timeout: 60000 });
+        this.log(logFile, `Karpenter instance profiles deletion result: ${result.trim() || 'No output (normal if no profiles existed)'}`);
+        this.log(logFile, 'Karpenter instance profiles cleanup completed successfully');
+      } catch (deleteError) {
+        // 如果没有找到任何instance profiles，xargs会失败，这是正常的
+        if (deleteError.message.includes('xargs') || deleteError.status === 123) {
+          this.log(logFile, 'No Karpenter instance profiles found to delete (normal)');
+        } else {
+          this.log(logFile, `Karpenter instance profiles deletion error: ${deleteError.message}`);
+        }
+      }
+
+    } catch (error) {
+      this.log(logFile, `Error in cleanupKarpenterInstanceProfiles: ${error.message}`);
       // 不抛出错误，继续后续步骤
     }
   }
