@@ -147,8 +147,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
 
       if (result.success) {
         message.success(`Pod ${podName} assigned to ${businessTag}`);
-        // 刷新数据
-        await dispatch(refreshAllAppStatus());
+        // 🚀 WebSocket 会自动触发刷新，无需手动刷新
       } else {
         message.error(result.error || 'Assignment failed');
       }

@@ -3461,20 +3461,54 @@ app.delete('/api/delete-service/:serviceName', async (req, res) => {
 app.post('/api/scale-deployment', async (req, res) => {
   try {
     const { deploymentName, replicas, isModelPool } = req.body;
-    
+
     console.log(`Scaling deployment ${deploymentName} to ${replicas} replicas (Model Pool: ${isModelPool})`);
-    
+
     if (isModelPool) {
-      // Model Pool的智能Scale逻辑
-      await handleModelPoolScale(deploymentName, replicas);
-    } else {
-      // 普通Deployment的直接Scale
-      const scaleCmd = `scale deployment ${deploymentName} --replicas=${replicas}`;
-      await executeKubectl(scaleCmd);
+      // Model Pool 的前置检查：如果是缩容且所有 pod 都已分配，则阻止操作
+      const deploymentInfo = await executeKubectl(`get deployment ${deploymentName} -o json`);
+      const deployment = JSON.parse(deploymentInfo);
+      const currentReplicas = deployment.spec.replicas;
+
+      if (replicas < currentReplicas) {
+        // 缩容操作，需要检查 pod 分配状态
+        const modelId = deployment.metadata.labels?.['model-id'];
+        if (modelId) {
+          const podsResult = await executeKubectl(`get pods -l model-id=${modelId} --no-headers -o custom-columns="NAME:.metadata.name,BUSINESS:.metadata.labels.business"`);
+          const podLines = podsResult.trim().split('\n').filter(line => line.trim());
+
+          // 计算 unassigned 和 assigned pods
+          let unassignedCount = 0;
+          let assignedCount = 0;
+
+          podLines.forEach(line => {
+            const parts = line.trim().split(/\s+/);
+            const business = parts[1];
+            if (!business || business === 'unassigned' || business === '<none>') {
+              unassignedCount++;
+            } else {
+              assignedCount++;
+            }
+          });
+
+          const podsToRemove = currentReplicas - replicas;
+
+          if (unassignedCount < podsToRemove) {
+            // 没有足够的 unassigned pod 可以删除
+            throw new Error(`Cannot scale down: ${assignedCount} pods are assigned to service bindings. Please unassign services before scaling down.`);
+          }
+
+          console.log(`Scale down check passed: ${unassignedCount} unassigned pods available, need to remove ${podsToRemove} pods`);
+        }
+      }
     }
-    
+
+    // 统一使用标准的 kubectl scale 命令
+    const scaleCmd = `scale deployment ${deploymentName} --replicas=${replicas}`;
+    await executeKubectl(scaleCmd);
+
     console.log(`Deployment ${deploymentName} scaled successfully`);
-    
+
     // 广播Scale更新
     broadcast({
       type: 'deployment_scaled',
@@ -3484,32 +3518,33 @@ app.post('/api/scale-deployment', async (req, res) => {
       replicas,
       isModelPool
     });
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: `Deployment ${deploymentName} scaled to ${replicas} replicas`,
       deploymentName,
       replicas
     });
-    
+
   } catch (error) {
     console.error('Deployment scale error:', error);
-    
+
     broadcast({
       type: 'deployment_scaled',
       status: 'error',
       message: `Failed to scale deployment: ${error.message}`,
       deploymentName: req.body.deploymentName
     });
-    
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
-// Model Pool智能Scale处理函数
+// Model Pool智能Scale处理函数 (已废弃，改用统一的kubectl scale + 前置检查)
+/*
 async function handleModelPoolScale(deploymentName, targetReplicas) {
   // 获取当前Deployment信息
   const deploymentInfo = await executeKubectl(`get deployment ${deploymentName} -o json`);
@@ -3593,6 +3628,7 @@ async function handleModelPoolScale(deploymentName, targetReplicas) {
   }
   // targetReplicas === currentReplicas 时不需要操作
 }
+*/
 
 // 业务Service列表API
 app.get('/api/binding-services', async (req, res) => {
