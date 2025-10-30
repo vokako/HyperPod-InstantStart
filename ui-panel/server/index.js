@@ -3119,13 +3119,47 @@ app.post('/api/undeploy', async (req, res) => {
     
     // 删除对应的Service
     if (deleteType === 'all' || deleteType === 'service') {
-      // 尝试常见的service命名模式
-      const possibleServices = [
-        modelTag.replace('-inference', '-nlb'),
-        modelTag.replace('-pool', '-nlb'),
-        `${modelTag}-nlb`,
-        `${modelTag}-service`
-      ];
+      // 解析modelTag，提取servEngine和原始deploymentTag
+      // modelTag格式: "sglang-sssr-2025-10-30-08-35-05-inference"
+      // 需要提取: servEngine="sglang", originalTag="sssr-2025-10-30-08-35-05"
+
+      const possibleServices = [];
+
+      // 尝试解析 servEngine (vllm, sglang, 等)
+      const knownEngines = ['vllm', 'sglang', 'custom'];
+      let servEngine = null;
+      let originalTag = null;
+
+      for (const engine of knownEngines) {
+        if (modelTag.startsWith(`${engine}-`)) {
+          servEngine = engine;
+          // 去掉前缀和后缀获得原始tag
+          let remaining = modelTag.substring(engine.length + 1); // 去掉 "sglang-"
+          if (remaining.endsWith('-inference')) {
+            originalTag = remaining.substring(0, remaining.length - 10); // 去掉 "-inference"
+          } else if (remaining.endsWith('-pool')) {
+            originalTag = remaining.substring(0, remaining.length - 5); // 去掉 "-pool"
+          } else {
+            originalTag = remaining;
+          }
+          break;
+        }
+      }
+
+      if (servEngine && originalTag) {
+        // 使用EKSServiceHelper的命名规律
+        possibleServices.push(
+          `${servEngine}-${originalTag}-nlb`,      // External LoadBalancer
+          `${servEngine}-${originalTag}-service`   // ClusterIP Service
+        );
+        console.log(`Parsed service names for deletion: servEngine=${servEngine}, originalTag=${originalTag}`);
+      } else {
+        console.error(`Failed to parse modelTag: ${modelTag}. Expected format: {engine}-{tag}-{suffix}`);
+        return res.status(400).json({
+          success: false,
+          error: `Invalid modelTag format: ${modelTag}. Cannot determine service names for deletion.`
+        });
+      }
       
       for (const serviceName of possibleServices) {
         try {
@@ -3699,6 +3733,22 @@ app.get('/api/deployments', async (req, res) => {
       // 检查是否为external访问
       const isExternal = matchingService?.metadata?.annotations?.['service.beta.kubernetes.io/aws-load-balancer-scheme'] === 'internet-facing';
 
+      // 提取container port信息
+      const containers = deployment.spec.template.spec.containers || [];
+      const containerPorts = [];
+
+      containers.forEach(container => {
+        if (container.ports && container.ports.length > 0) {
+          container.ports.forEach(port => {
+            containerPorts.push({
+              containerPort: port.containerPort,
+              protocol: port.protocol || 'TCP',
+              name: port.name || 'http'
+            });
+          });
+        }
+      });
+
       return {
         modelTag,
         deploymentType: finalDeploymentType,  // Router | VLLM | Others 等
@@ -3713,6 +3763,8 @@ app.get('/api/deployments', async (req, res) => {
         isExternal: isExternal,
         externalIP: matchingService?.status?.loadBalancer?.ingress?.[0]?.hostname ||
                    matchingService?.status?.loadBalancer?.ingress?.[0]?.ip || 'Pending',
+        port: matchingService?.spec?.ports?.[0]?.port || '8000',  // Service端口
+        containerPorts: containerPorts,  // 新增：container端口信息
         labels: labels,  // 添加标签信息供前端使用
         // Router专用字段
         isRouter: finalDeploymentType === 'Router'
@@ -8512,6 +8564,69 @@ console.log('KEDA Auto Scaling APIs loaded');
 // ================================
 
 const RoutingManager = require('./utils/routingManager');
+
+// 获取可用的SGLang部署列表 (用于Router配置)
+app.get('/api/sglang-deployments', async (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+
+    // 获取所有SGLang类型的deployment
+    const deployCmd = 'kubectl get deployments -l model-type=sglang -o json';
+    const deployResult = execSync(deployCmd, { encoding: 'utf8' });
+    const deployments = JSON.parse(deployResult);
+
+    // 获取所有SGLang类型的service
+    const serviceCmd = 'kubectl get services -l model-type=sglang -o json';
+    const serviceResult = execSync(serviceCmd, { encoding: 'utf8' });
+    const services = JSON.parse(serviceResult);
+
+    // 匹配deployment和service，只返回ClusterIP类型的
+    const availableDeployments = [];
+
+    deployments.items.forEach(deployment => {
+      const deploymentTag = deployment.metadata.labels['deployment-tag'];
+      if (!deploymentTag) return;
+
+      // 找到对应的service
+      const matchingService = services.items.find(service =>
+        service.metadata.labels['deployment-tag'] === deploymentTag
+      );
+
+      if (matchingService && matchingService.spec.type === 'ClusterIP') {
+        const port = matchingService.spec.ports[0]?.port || 8000;
+
+        availableDeployments.push({
+          deploymentTag,
+          name: deployment.metadata.name,
+          serviceName: matchingService.metadata.name,
+          port: port,
+          ready: deployment.status.readyReplicas || 0,
+          total: deployment.status.replicas || 0,
+          status: (deployment.status.readyReplicas === deployment.status.replicas &&
+                   deployment.status.readyReplicas > 0) ? 'Ready' : 'NotReady',
+          creationTime: deployment.metadata.creationTimestamp
+        });
+      }
+    });
+
+    // 按创建时间排序，最新的在前面
+    availableDeployments.sort((a, b) => new Date(b.creationTime) - new Date(a.creationTime));
+
+    res.json({
+      success: true,
+      deployments: availableDeployments,
+      total: availableDeployments.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching SGLang deployments:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      deployments: []
+    });
+  }
+});
 
 // 部署 Advanced Scaling 配置
 app.post('/api/deploy-advanced-scaling', async (req, res) => {

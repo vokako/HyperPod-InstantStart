@@ -90,6 +90,11 @@ const StatusMonitorRedux = ({ activeTab }) => {
     dispatch(refreshAllAppStatus());
   }, [dispatch]); // 只依赖dispatch，避免无限循环
 
+  // Badge同步监听：当数据更新时强制重新渲染
+  useEffect(() => {
+    setLocalRefreshTrigger(prev => prev + 1);
+  }, [pods.length, services.length, deployments.length, loading]);
+
   // 手动刷新
   const handleRefresh = useCallback(async () => {
     try {
@@ -855,28 +860,6 @@ const StatusMonitorRedux = ({ activeTab }) => {
       }
     },
     {
-      title: 'Access',
-      key: 'access',
-      render: (_, record) => {
-        const getAccessIcon = (isExternal) => {
-          return isExternal ? <GlobalOutlined /> : <LockOutlined />;
-        };
-
-        const getAccessColor = (isExternal) => {
-          return isExternal ? 'orange' : 'purple';
-        };
-
-        return (
-          <Tag
-            color={getAccessColor(record.isExternal)}
-            icon={getAccessIcon(record.isExternal)}
-          >
-            {record.isExternal ? 'External' : 'Internal'}
-          </Tag>
-        );
-      }
-    },
-    {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
@@ -917,6 +900,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
     {
       title: 'Service',
       key: 'service',
+      width: 150,
       render: (_, record) => (
         <div>
           <div style={{ fontFamily: 'monospace', fontSize: '12px' }}>
@@ -931,30 +915,110 @@ const StatusMonitorRedux = ({ activeTab }) => {
       ),
     },
     {
-      title: 'External Access',
+      title: 'Container Port',
+      key: 'containerPorts',
+      width: 120,
+      render: (_, record) => (
+        <div>
+          {record.containerPorts && record.containerPorts.length > 0 ? (
+            record.containerPorts.map((port, index) => (
+              <Tag key={index} color="cyan" size="small" style={{ margin: '1px' }}>
+                {port.containerPort}
+                {port.protocol && port.protocol !== 'TCP' && `/${port.protocol}`}
+              </Tag>
+            ))
+          ) : (
+            <Tag size="small" color="default">N/A</Tag>
+          )}
+        </div>
+      ),
+    },
+    {
+      title: 'Access & URL',
       dataIndex: 'externalIP',
       key: 'externalIP',
+      width: 200,
       render: (ip, record) => {
+        // 访问类型标签的图标和颜色函数
+        const getAccessIcon = (isExternal) => {
+          return isExternal ? <GlobalOutlined /> : <LockOutlined />;
+        };
+
+        const getAccessColor = (isExternal) => {
+          return isExternal ? 'orange' : 'purple';
+        };
+
+        // 内部访问或无服务的情况
         if (!record.isExternal) {
-          return <Tag color="purple">Internal Only</Tag>;
+          return (
+            <Tag
+              color={getAccessColor(false)}
+              icon={getAccessIcon(false)}
+            >
+              Internal Only
+            </Tag>
+          );
         }
 
+        // 外部访问但状态为 Pending
         if (ip === 'Pending') {
-          return <Tag color="orange">Pending</Tag>;
-        }
-        if (ip === 'N/A' || !record.hasService) {
-          return <Tag color="default">No Service</Tag>;
+          return (
+            <Space direction="vertical" size="small">
+              <Tag
+                color={getAccessColor(true)}
+                icon={getAccessIcon(true)}
+              >
+                External
+              </Tag>
+              <Tag color="orange">Pending</Tag>
+            </Space>
+          );
         }
 
-        // 根据部署类型确定端口 (VLLM和SGLang都使用8000)
-        const port = '8000';
+        // 外部访问但无服务
+        if (ip === 'N/A' || !record.hasService) {
+          return (
+            <Space direction="vertical" size="small">
+              <Tag
+                color={getAccessColor(true)}
+                icon={getAccessIcon(true)}
+              >
+                External
+              </Tag>
+              <Tag color="default">No Service</Tag>
+            </Space>
+          );
+        }
+
+        // 外部访问且有有效的 URL
+        const port = record.port || '8000';
+        const fullUrl = `http://${ip}:${port}`;
 
         return (
-          <Tooltip title={`http://${ip}:${port}`}>
-            <span style={{ fontFamily: 'monospace', fontSize: '11px' }}>
-              {ip.length > 20 ? `${ip.substring(0, 20)}...` : ip}
-            </span>
-          </Tooltip>
+          <div style={{ width: '180px' }}>
+            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+              <Tag
+                color={getAccessColor(true)}
+                icon={getAccessIcon(true)}
+                size="small"
+              >
+                External
+              </Tag>
+              <Tooltip title={fullUrl}>
+                <Text
+                  copyable={{ text: fullUrl }}
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    wordBreak: 'break-all',
+                    width: '100%'
+                  }}
+                >
+                  {ip.length > 12 ? `${ip.substring(0, 12)}...` : ip}:{port}
+                </Text>
+              </Tooltip>
+            </Space>
+          </div>
         );
       },
     },
@@ -1453,6 +1517,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
   }
 
   // 完整的Tabs视图（当没有指定activeTab时）
+
   return (
     <Tabs defaultActiveKey="pods" size="small">
       <TabPane

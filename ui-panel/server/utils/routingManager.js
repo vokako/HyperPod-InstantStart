@@ -26,9 +26,9 @@ class RoutingManager {
       metrics: metricsPort
     };
 
-    // 固定使用clusterip服务类型
+    // 使用用户选择的服务类型
     const serviceYaml = this.generateRouterServiceYaml(
-      'clusterip',
+      serviceType,
       resourceName,
       portConfig
     );
@@ -161,19 +161,15 @@ spec:
     let args = [];
 
     // 固定的Kubernetes服务发现模式
-    // 根据targetDeployment生成selector
-    const podSelector = targetDeployment
-      ? `deployment-tag=${targetDeployment},model-type=sglang`
-      : 'model-type=sglang';
+    // 根据targetDeployment生成正确的selector - 只使用app标签，避免复杂selector问题
+    const podSelector = `app=sglang-${targetDeployment}-inference`;
 
     args.push(
       '- "--service-discovery"',
       '- "--selector"',
       `- "${podSelector}"`,
       '- "--service-discovery-port"',
-      `- "${discoveryPort}"`,
-      '- "--check-interval-secs"',
-      `- "${checkInterval}"`
+      `- "${discoveryPort}"`
     );
 
     // 路由策略
@@ -225,6 +221,7 @@ spec:
     ).join('\n');
 
     if (serviceType === 'external') {
+      const nlbAnnotations = this.generateNLBAnnotations(true);
       return `---
 apiVersion: v1
 kind: Service
@@ -234,7 +231,7 @@ metadata:
     app: ${resourceName}
     service-type: "router"
     deployment-name: "${resourceName}"
-  annotations:
+  annotations:${nlbAnnotations}
 spec:
   ports:
 ${portsSection}
@@ -257,6 +254,27 @@ spec:
     app: ${resourceName}
   ports:
 ${portsSection}`;
+    }
+  }
+
+  /**
+   * 生成 LoadBalancer annotations
+   * @param {boolean} isExternal - 是否为外部访问
+   * @returns {string} annotations YAML 字符串
+   */
+  static generateNLBAnnotations(isExternal) {
+    if (isExternal) {
+      return `
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"`;
+    } else {
+      return `
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"`;
     }
   }
 
@@ -419,19 +437,17 @@ ${portsSection}`;
             name: resourceName
           },
 
-          // Service - 基于EKSServiceHelper的命名规律
-          // EKSServiceHelper.generateServiceYaml 调用参数:
-          // serviceType='external', servEngine='sglrouter', modelTag=resourceName, portConfig
-          // 生成的Service名称: sglrouter-{resourceName}-nlb
+          // Service - 基于实际Router Service的命名格式
+          // Router Service的实际命名格式是: {resourceName}-nlb 和 {resourceName}-service
           {
             type: 'service-nlb',
-            cmd: `kubectl delete service sglrouter-${resourceName}-nlb --ignore-not-found=true`,
-            name: `sglrouter-${resourceName}-nlb`
+            cmd: `kubectl delete service ${resourceName}-nlb --ignore-not-found=true`,
+            name: `${resourceName}-nlb`
           },
           {
             type: 'service-clusterip',
-            cmd: `kubectl delete service sglrouter-${resourceName}-service --ignore-not-found=true`,
-            name: `sglrouter-${resourceName}-service`
+            cmd: `kubectl delete service ${resourceName}-service --ignore-not-found=true`,
+            name: `${resourceName}-service`
           },
 
           // RBAC资源 - 基于resourceName（命名规则确定）
@@ -557,10 +573,9 @@ ${portsSection}`;
       errors.push('Deployment name must contain only lowercase letters, numbers and hyphens');
     }
 
-    // Target deployment validation (允许空值表示所有SGLang部署)
-    // 如果提供了targetDeployment，验证格式
-    if (config.targetDeployment && typeof config.targetDeployment !== 'string') {
-      errors.push('Target deployment must be a valid string');
+    // Target deployment validation (必须指定特定的SGLang部署)
+    if (!config.targetDeployment || config.targetDeployment.trim() === '') {
+      errors.push('Target deployment is required');
     }
 
     // Service discovery validation
@@ -583,7 +598,9 @@ ${portsSection}`;
       errors.push('Router port and metrics port cannot be the same');
     }
 
-    // 固定为clusterip，不需要验证serviceType
+    if (config.serviceType && !['external', 'clusterip'].includes(config.serviceType)) {
+      errors.push('Service type must be either "external" or "clusterip"');
+    }
 
     if (config.routingPolicy && !['cache_aware', 'round_robin', 'random'].includes(config.routingPolicy)) {
       errors.push('Routing policy must be one of: cache_aware, round_robin, random');
@@ -620,8 +637,8 @@ ${portsSection}`;
       routingPolicy: 'cache_aware',
       routerPort: 30000,
       metricsPort: 29000,
-      serviceType: 'clusterip', // 固定为clusterip
-      targetDeployment: '',
+      serviceType: 'clusterip', // 默认为clusterip
+      targetDeployment: 'qwensgl-2025-10-30-06-39-57', // 默认选择有效的SGLang部署
       discoveryPort: 8000,
       checkInterval: 120,
       cacheThreshold: 0.5,
