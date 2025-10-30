@@ -2257,10 +2257,20 @@ app.get('/api/rayjobs', async (req, res) => {
   try {
     const output = await executeKubectl('get rayjobs -o json');
     const rayjobs = JSON.parse(output);
-    res.json(rayjobs.items || []);
+    // 🔄 返回与前端期望匹配的格式
+    res.json({
+      items: rayjobs.items || [],
+      kind: 'RayJobList',
+      apiVersion: rayjobs.apiVersion || 'ray.io/v1'
+    });
   } catch (error) {
     console.error('RayJobs fetch error:', error);
-    res.json([]); // 返回空数组而不是错误对象
+    // 返回空列表而不是空数组，保持格式一致
+    res.json({
+      items: [],
+      kind: 'RayJobList',
+      apiVersion: 'ray.io/v1'
+    });
   }
 });
 
@@ -2303,11 +2313,14 @@ app.delete('/api/rayjobs/:jobName', async (req, res) => {
 });
 
 // 获取所有HyperPod训练任务
-app.get('/api/training-jobs', async (req, res) => {
+// ❌ 已删除混合的 /api/training-jobs API，使用专门的 /api/hyperpod-jobs 和 /api/rayjobs
+
+// 🔄 获取纯HyperPod训练任务（不包括RayJob）
+app.get('/api/hyperpod-jobs', async (req, res) => {
   try {
-    console.log('Fetching training jobs (HyperPod PytorchJob + RayJob)...');
-    
-    // 获取HyperPod PytorchJob
+    console.log('Fetching HyperPod PytorchJobs only...');
+
+    // 只获取HyperPod PytorchJob
     let hyperpodJobs = [];
     try {
       const hyperpodOutput = await executeKubectl('get hyperpodpytorchjob -o json');
@@ -2326,43 +2339,17 @@ app.get('/api/training-jobs', async (req, res) => {
     } catch (error) {
       const optimizedMessage = optimizeErrorMessage(error.message);
       console.log('No HyperPod PytorchJobs found or error:', optimizedMessage);
-      // 对于导入的集群，这是正常的 - 不记录为错误
     }
 
-    // 获取RayJob
-    let rayJobs = [];
-    try {
-      const rayOutput = await executeKubectl('get rayjob -o json');
-      const rayResult = JSON.parse(rayOutput);
-      rayJobs = rayResult.items.map(job => ({
-        name: job.metadata.name,
-        namespace: job.metadata.namespace || 'default',
-        creationTimestamp: job.metadata.creationTimestamp,
-        status: job.status || {},
-        type: 'rayjob',
-        spec: {
-          replicas: 1, // RayJob通常是单个作业
-          nprocPerNode: 1
-        }
-      }));
-    } catch (error) {
-      const optimizedMessage = optimizeErrorMessage(error.message);
-      console.log('No RayJobs found or error:', optimizedMessage);
-      // 对于导入的集群，这是正常的 - 不记录为错误
-    }
+    console.log(`Found ${hyperpodJobs.length} HyperPod training jobs:`,
+                hyperpodJobs.map(j => j.name));
 
-    // 合并两种类型的作业
-    const trainingJobs = [...hyperpodJobs, ...rayJobs];
-    
-    console.log(`Found ${trainingJobs.length} training jobs (${hyperpodJobs.length} HyperPod + ${rayJobs.length} Ray):`, 
-                trainingJobs.map(j => `${j.name}(${j.type})`));
-    
     res.json({
       success: true,
-      jobs: trainingJobs
+      jobs: hyperpodJobs
     });
   } catch (error) {
-    console.error('Error fetching training jobs:', error);
+    console.error('Error fetching HyperPod jobs:', error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -2371,8 +2358,8 @@ app.get('/api/training-jobs', async (req, res) => {
   }
 });
 
-// 删除指定的HyperPod训练任务
-app.delete('/api/training-jobs/:jobName', async (req, res) => {
+// 🔄 删除指定的HyperPod训练任务
+app.delete('/api/hyperpod-jobs/:jobName', async (req, res) => {
   try {
     const { jobName } = req.params;
     console.log(`Deleting training job: ${jobName}`);
@@ -2953,8 +2940,8 @@ app.get('/api/training-history', async (req, res) => {
   }
 });
 
-// 获取训练任务关联的pods
-app.get('/api/training-jobs/:jobName/pods', async (req, res) => {
+// 🔄 获取HyperPod训练任务关联的pods
+app.get('/api/hyperpod-jobs/:jobName/pods', async (req, res) => {
   try {
     const { jobName } = req.params;
     console.log(`Fetching pods for training job: ${jobName}`);
@@ -3663,40 +3650,58 @@ app.get('/api/binding-services', async (req, res) => {
 
 app.get('/api/deployments', async (req, res) => {
   try {
-    console.log('Fetching deployments...');
-    
+    console.log('Fetching deployments (including Routers)...');
+
     // 获取所有deployment
     const deploymentsOutput = await executeKubectl('get deployments -o json');
     const deployments = JSON.parse(deploymentsOutput);
-    
+
     // 获取所有service
     const servicesOutput = await executeKubectl('get services -o json');
     const services = JSON.parse(servicesOutput);
-    
-    // 显示所有deployment，不进行过滤
-    const modelDeployments = deployments.items;
-    
+
+    // 显示所有deployment，不进行过滤（包含Router）
+    const allDeployments = deployments.items;
+
     // 为每个部署匹配对应的service
-    const deploymentList = modelDeployments.map(deployment => {
+    const deploymentList = allDeployments.map(deployment => {
       const appLabel = deployment.metadata.labels?.app;
-      const matchingService = services.items.find(service => 
-        service.spec.selector?.app === appLabel
-      );
-      
-      // 简化解析逻辑
-      const deploymentName = deployment.metadata.name;
       const labels = deployment.metadata.labels || {};
-      
-      // 使用deployment名称作为modelTag，从标签获取类型
+      const deploymentName = deployment.metadata.name;
+
+      // 检测部署类型：优先通过service-type标签识别Router
+      const serviceType = labels['service-type'];
+      const deploymentType = labels['deployment-type'] || labels['model-type'];
+
+      let finalDeploymentType;
+      if (serviceType === 'router') {
+        finalDeploymentType = 'Router';
+      } else if (deploymentType) {
+        finalDeploymentType = deploymentType;
+      } else {
+        finalDeploymentType = 'Others';
+      }
+
+      // 匹配对应的service
+      const matchingService = services.items.find(service => {
+        // Router的service匹配逻辑：查找包含deployment名称的service
+        if (finalDeploymentType === 'Router') {
+          return service.metadata.name.includes(deploymentName) ||
+                 service.spec.selector?.app === appLabel;
+        }
+        // 普通模型deployment的service匹配逻辑
+        return service.spec.selector?.app === appLabel;
+      });
+
+      // 使用deployment名称作为modelTag
       const modelTag = deploymentName;
-      const deploymentType = labels['deployment-type'] || labels['model-type'] || 'Others';
-      
+
       // 检查是否为external访问
       const isExternal = matchingService?.metadata?.annotations?.['service.beta.kubernetes.io/aws-load-balancer-scheme'] === 'internet-facing';
-      
+
       return {
         modelTag,
-        deploymentType,
+        deploymentType: finalDeploymentType,  // Router | VLLM | Others 等
         deploymentName: deployment.metadata.name,
         serviceName: matchingService?.metadata.name || 'N/A',
         replicas: deployment.spec.replicas,
@@ -3706,13 +3711,15 @@ app.get('/api/deployments', async (req, res) => {
         hasService: !!matchingService,
         serviceType: matchingService?.spec.type || 'N/A',
         isExternal: isExternal,
-        externalIP: matchingService?.status?.loadBalancer?.ingress?.[0]?.hostname || 
+        externalIP: matchingService?.status?.loadBalancer?.ingress?.[0]?.hostname ||
                    matchingService?.status?.loadBalancer?.ingress?.[0]?.ip || 'Pending',
-        labels: labels  // 添加标签信息供前端使用
+        labels: labels,  // 添加标签信息供前端使用
+        // Router专用字段
+        isRouter: finalDeploymentType === 'Router'
       };
     });
     
-    console.log('Deployments fetched:', deploymentList.length, 'model deployments');
+    console.log('Deployments fetched:', deploymentList.length, 'deployments (including Routers)');
     res.json(deploymentList);
     
   } catch (error) {
@@ -8570,6 +8577,142 @@ app.post('/api/deploy-advanced-scaling', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// 获取Router部署列表
+app.get('/api/routers', async (req, res) => {
+  try {
+    console.log('Getting Router deployments list');
+
+    const routers = await RoutingManager.getRouterDeployments();
+
+    res.json({
+      success: true,
+      routers: routers,
+      count: routers.length
+    });
+
+  } catch (error) {
+    console.error('Error getting Router deployments:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to get Router deployments'
+    });
+  }
+});
+
+// 删除指定Router部署
+app.delete('/api/routers/:deploymentName', async (req, res) => {
+  try {
+    const { deploymentName } = req.params;
+    console.log(`Deleting Router deployment: ${deploymentName}`);
+
+    if (!deploymentName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Deployment name is required'
+      });
+    }
+
+    const result = await RoutingManager.deleteRouter(deploymentName);
+
+    if (result.success) {
+      // 广播删除完成消息
+      broadcast({
+        type: 'sglang_router_deletion',
+        status: 'success',
+        message: result.message,
+        deploymentName: deploymentName,
+        deletedCount: result.totalDeleted,
+        timestamp: new Date().toISOString()
+      });
+
+      res.json({
+        success: true,
+        message: result.message,
+        processedInstances: result.processedInstances,
+        totalDeleted: result.totalDeleted,
+        results: result.results
+      });
+    } else {
+      // 广播删除失败消息
+      broadcast({
+        type: 'sglang_router_deletion',
+        status: 'error',
+        message: result.message,
+        deploymentName: deploymentName,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+
+      res.status(400).json(result);
+    }
+
+  } catch (error) {
+    console.error('Error deleting Router deployment:', error);
+
+    broadcast({
+      type: 'sglang_router_deletion',
+      status: 'error',
+      message: 'Failed to delete Router deployment',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to delete Router deployment'
+    });
+  }
+});
+
+// 删除所有Router部署（管理员功能）
+app.delete('/api/routers', async (req, res) => {
+  try {
+    console.log('Deleting all Router deployments');
+
+    const result = await RoutingManager.deleteAllRouters();
+
+    if (result.success) {
+      broadcast({
+        type: 'sglang_router_deletion_all',
+        status: 'success',
+        message: result.message,
+        timestamp: new Date().toISOString()
+      });
+
+      res.json(result);
+    } else {
+      broadcast({
+        type: 'sglang_router_deletion_all',
+        status: 'error',
+        message: result.message,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+
+      res.status(400).json(result);
+    }
+
+  } catch (error) {
+    console.error('Error deleting all Router deployments:', error);
+
+    broadcast({
+      type: 'sglang_router_deletion_all',
+      status: 'error',
+      message: 'Failed to delete all Router deployments',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to delete all Router deployments'
     });
   }
 });

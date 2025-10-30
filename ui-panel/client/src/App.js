@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Layout, Row, Col, Card, message, Tabs, Space, Badge } from 'antd';
-import { ContainerOutlined, ApiOutlined, RocketOutlined, ExperimentOutlined, DatabaseOutlined, CloudServerOutlined, SettingOutlined } from '@ant-design/icons';
+import { Layout, Row, Col, Card, message, Tabs, Space, Badge, Button } from 'antd';
+import { useDispatch } from 'react-redux';
+import { ContainerOutlined, ApiOutlined, RocketOutlined, ExperimentOutlined, DatabaseOutlined, CloudServerOutlined, SettingOutlined, ReloadOutlined } from '@ant-design/icons';
+import { refreshAllAppStatus } from './store/slices/appStatusSlice';
 import ThemeProvider from './components/ThemeProvider';
 import ConfigPanel from './components/ConfigPanel';
 import ServiceConfigPanel from './components/ServiceConfigPanel';
 import ClusterStatusV2Redux from './components/ClusterStatusV2Redux';
 import TestPanel from './components/TestPanel';
 import StatusMonitorRedux from './components/StatusMonitorRedux';
-// import DeploymentManager from './components/DeploymentManagerRedux'; // 备份：原部署管理组件
+// 备份：原部署管理组件已迁移到StatusMonitorRedux
 import HyperPodRecipes from './components/HyperPodRecipes';
 import TrainingMonitorPanel from './components/TrainingMonitorPanelRedux';
 import TrainingHistoryPanel from './components/TrainingHistoryPanel';
@@ -35,6 +37,8 @@ const { TabPane } = Tabs;
 // const { Text } = Typography; // 未使用
 
 function App() {
+  const dispatch = useDispatch();
+
   const [clusterData, setClusterData] = useState([]);
   const [pods, setPods] = useState([]);
   const [services, setServices] = useState([]);
@@ -45,6 +49,20 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeMainTab, setActiveMainTab] = useState('model-management'); // 新增主标签状态
   const [configTab, setConfigTab] = useState('model-config'); // 配置标签页状态
+
+  // 🔄 全局App Status刷新函数
+  const handleAppStatusRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await dispatch(refreshAllAppStatus()).unwrap();
+      message.success('App status refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing app status:', error);
+      message.error('Failed to refresh app status: ' + (error.message || error));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [dispatch]);
 
   const connectWebSocket = () => {
     console.log('Attempting to connect to WebSocket...');
@@ -245,6 +263,16 @@ function App() {
               operationRefreshManager.triggerOperationRefresh('model-undeploy', data);
             } else {
               message.error(data.message);
+            }
+            break;
+
+          case 'sglang_router_deletion':
+            if (data.status === 'success') {
+              message.success(`Router "${data.deploymentName}" deleted successfully`);
+              // 🚀 触发操作刷新
+              operationRefreshManager.triggerOperationRefresh('router-delete', data);
+            } else {
+              message.error(`Failed to delete Router: ${data.error}`);
             }
             break;
             
@@ -1020,9 +1048,22 @@ function App() {
               style={{ height: '45vh', overflow: 'auto' }}
               bodyStyle={{ padding: 0 }}
             >
-              <Tabs 
-                defaultActiveKey="pods" 
+              <Tabs
+                defaultActiveKey="pods"
                 size="small"
+                tabBarExtraContent={
+                  <div style={{ marginRight: '12px' }}>
+                    <Button
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      loading={refreshing}
+                      onClick={handleAppStatusRefresh}
+                      title="Refresh All App Status Data"
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                }
               >
                 <TabPane 
                   tab={
@@ -1081,7 +1122,7 @@ function App() {
                   tab={
                     <Space>
                       <ExperimentOutlined />
-                      HyperPod PytorchJob
+                      HyperPodPytorchJob
                     </Space>
                   } 
                   key="hyperpod-jobs"

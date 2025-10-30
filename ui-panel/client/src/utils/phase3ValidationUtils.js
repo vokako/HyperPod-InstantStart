@@ -1,6 +1,6 @@
 /**
  * 第三阶段验证工具
- * 验证TrainingMonitorPanel、DeploymentManager集成和WebSocket优化
+ * 验证TrainingMonitorPanel、部署管理集成和WebSocket优化
  */
 
 import globalRefreshManager from '../hooks/useGlobalRefresh';

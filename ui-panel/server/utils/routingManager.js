@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const EKSServiceHelper = require('./eksServiceHelper');
 
 class RoutingManager {
   static generateRouterYaml(config) {
@@ -16,8 +17,38 @@ class RoutingManager {
     const timestamp = Date.now();
     const resourceName = `${deploymentName}-${timestamp}`;
 
-    // Determine Service type
-    const k8sServiceType = serviceType === 'external' ? 'LoadBalancer' : 'ClusterIP';
+    // 生成 Deployment 和相关 RBAC 资源
+    const deploymentYaml = this.generateRouterDeploymentYaml(config, resourceName);
+
+    // 使用 EKSServiceHelper 生成 Service
+    const portConfig = {
+      http: routerPort,
+      metrics: metricsPort
+    };
+
+    const serviceYaml = EKSServiceHelper.generateServiceYaml(
+      serviceType,
+      'sglrouter', // 固定的服务引擎类别
+      resourceName,    // 完整的资源名称作为modelTag
+      portConfig
+    );
+
+    return `${deploymentYaml}\n${serviceYaml}`;
+  }
+
+  /**
+   * 生成 Router Deployment 及相关 RBAC 资源的 YAML
+   * @param {Object} config - 配置对象
+   * @param {string} resourceName - 资源名称 (包含时间戳)
+   * @returns {string} Deployment YAML 字符串
+   */
+  static generateRouterDeploymentYaml(config, resourceName) {
+    const {
+      deploymentName = 'sglang-router',
+      routingPolicy = 'cache_aware',
+      routerPort = 30000,
+      metricsPort = 29000
+    } = config;
 
     return `---
 # ServiceAccount for Router
@@ -61,8 +92,7 @@ metadata:
   name: ${resourceName}
   labels:
     app: ${resourceName}
-    deployment-name: "${deploymentName}"
-    model-type: "sglang-router"
+    deployment-name: "${resourceName}"
     service-type: "router"
 spec:
   replicas: 1
@@ -73,8 +103,7 @@ spec:
     metadata:
       labels:
         app: ${resourceName}
-        deployment-name: "${deploymentName}"
-        model-type: "sglang-router"
+        deployment-name: "${resourceName}"
         service-type: "router"
     spec:
       serviceAccountName: ${resourceName}
@@ -110,32 +139,7 @@ spec:
               name: metrics
           env:
             - name: RUST_LOG
-              value: "info"
-
----
-# Router Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${resourceName}-service
-  labels:
-    app: ${resourceName}
-    deployment-name: "${deploymentName}"
-    model-type: "sglang-router"
-    service-type: "router"
-spec:
-  type: ${k8sServiceType}
-  selector:
-    app: ${resourceName}
-  ports:
-  - name: http
-    port: ${routerPort}
-    targetPort: ${routerPort}
-    protocol: TCP
-  - name: metrics
-    port: ${metricsPort}
-    targetPort: ${metricsPort}
-    protocol: TCP`;
+              value: "info"`;
   }
 
   static async applyRouterConfiguration(config) {
@@ -228,40 +232,195 @@ spec:
     }
   }
 
-  static async deleteRouter() {
+  /**
+   * 获取所有Router部署列表
+   * @returns {Array} Router部署列表
+   */
+  static async getRouterDeployments() {
     try {
-      // Delete all SGLang Router resources
-      const commands = [
-        'kubectl delete deployment sglang-router',
-        'kubectl delete service sglang-router-service',
-        'kubectl delete clusterrolebinding sglang-router',
-        'kubectl delete clusterrole sglang-router',
-        'kubectl delete serviceaccount sglang-router'
-      ];
+      // 查找所有Router类型的Deployment
+      const cmd = 'kubectl get deployments -l service-type=router -o json';
+      const result = execSync(cmd, { encoding: 'utf8' });
+      const deployments = JSON.parse(result);
+
+      return deployments.items.map(deployment => ({
+        resourceName: deployment.metadata.name,           // sglang-router-1761786858801
+        deploymentName: deployment.metadata.labels['deployment-name'] || 'unknown', // sglang-router
+        namespace: deployment.metadata.namespace || 'default',
+        creationTime: deployment.metadata.creationTimestamp,
+        replicas: deployment.status.replicas || 0,
+        readyReplicas: deployment.status.readyReplicas || 0,
+        labels: deployment.metadata.labels,
+        status: (deployment.status.replicas === deployment.status.readyReplicas &&
+                deployment.status.readyReplicas > 0) ? 'Ready' : 'NotReady'
+      }));
+
+    } catch (error) {
+      console.error('Error getting Router deployments:', error);
+      return [];
+    }
+  }
+
+  /**
+   * 删除指定的Router部署实例
+   * @param {string} deploymentName - 部署名称（如 'sglang-router'）
+   * @returns {Object} 删除结果
+   */
+  static async deleteRouter(deploymentName) {
+    try {
+      console.log(`Deleting Router deployment: ${deploymentName}`);
+
+      // 步骤1: 智能查找Router Deployment
+      // 现在labels使用完整resourceName，支持直接按resourceName查询
+      const cmd = `kubectl get deployment -l deployment-name=${deploymentName},service-type=router -o json`;
+      const result = execSync(cmd, { encoding: 'utf8' });
+      const deployments = JSON.parse(result).items;
+
+      if (deployments.length === 0) {
+        return {
+          success: false,
+          message: `Router deployment '${deploymentName}' not found`
+        };
+      }
 
       const results = [];
-      for (const cmd of commands) {
-        try {
-          const result = execSync(cmd, { encoding: 'utf8' });
-          results.push(`${cmd}: ${result.trim()}`);
-        } catch (error) {
-          // Some resources might not exist, that's OK
-          results.push(`${cmd}: ${error.message}`);
+      let totalDeleted = 0;
+
+      for (const deployment of deployments) {
+        const resourceName = deployment.metadata.name; // 获取实际名称: sglang-router-1761786858801
+        const timestamp = resourceName.split('-').pop(); // 提取时间戳: 1761786858801
+
+        console.log(`Processing Router instance: ${resourceName}`);
+
+        // 步骤2: 删除各类资源 - 按照创建时的命名规律
+        const deleteOperations = [
+          // Deployment - 直接删除
+          {
+            type: 'deployment',
+            cmd: `kubectl delete deployment ${resourceName}`,
+            name: resourceName
+          },
+
+          // Service - 基于EKSServiceHelper的命名规律
+          // EKSServiceHelper.generateServiceYaml 调用参数:
+          // serviceType='external', servEngine='sglrouter', modelTag=resourceName, portConfig
+          // 生成的Service名称: sglrouter-{resourceName}-nlb
+          {
+            type: 'service-nlb',
+            cmd: `kubectl delete service sglrouter-${resourceName}-nlb --ignore-not-found=true`,
+            name: `sglrouter-${resourceName}-nlb`
+          },
+          {
+            type: 'service-clusterip',
+            cmd: `kubectl delete service sglrouter-${resourceName}-service --ignore-not-found=true`,
+            name: `sglrouter-${resourceName}-service`
+          },
+
+          // RBAC资源 - 基于resourceName（命名规则确定）
+          {
+            type: 'serviceaccount',
+            cmd: `kubectl delete serviceaccount ${resourceName} --ignore-not-found=true`,
+            name: resourceName
+          },
+          {
+            type: 'clusterrole',
+            cmd: `kubectl delete clusterrole ${resourceName} --ignore-not-found=true`,
+            name: resourceName
+          },
+          {
+            type: 'clusterrolebinding',
+            cmd: `kubectl delete clusterrolebinding ${resourceName} --ignore-not-found=true`,
+            name: resourceName
+          }
+        ];
+
+        // 执行删除操作
+        for (const operation of deleteOperations) {
+          try {
+            console.log(`Executing: ${operation.cmd}`);
+            const output = execSync(operation.cmd, { encoding: 'utf8' });
+            const cleanOutput = output.trim();
+
+            if (cleanOutput && !cleanOutput.includes('not found') && !cleanOutput.includes('No resources found')) {
+              totalDeleted++;
+              results.push({
+                resource: operation.type,
+                name: operation.name,
+                success: true,
+                output: cleanOutput
+              });
+            } else {
+              results.push({
+                resource: operation.type,
+                name: operation.name,
+                success: true,
+                output: 'Resource not found (already deleted or never existed)'
+              });
+            }
+          } catch (error) {
+            console.warn(`Failed to delete ${operation.type} ${operation.name}:`, error.message);
+            results.push({
+              resource: operation.type,
+              name: operation.name,
+              success: false,
+              error: error.message
+            });
+          }
         }
       }
 
       return {
         success: true,
-        message: 'SGLang Router resources deleted',
+        message: `Router deployment '${deploymentName}' deleted successfully`,
+        processedInstances: deployments.length,
+        totalDeleted: totalDeleted,
         results: results
       };
 
     } catch (error) {
-      console.error('Error deleting SGLang Router:', error);
+      console.error('Error deleting Router:', error);
       return {
         success: false,
         error: error.message,
-        message: 'Failed to delete SGLang Router'
+        message: `Failed to delete Router deployment '${deploymentName}'`
+      };
+    }
+  }
+
+  /**
+   * 删除所有Router部署（危险操作，仅限管理使用）
+   * @returns {Object} 删除结果
+   */
+  static async deleteAllRouters() {
+    try {
+      const routers = await this.getRouterDeployments();
+
+      if (routers.length === 0) {
+        return {
+          success: true,
+          message: 'No Router deployments found',
+          results: []
+        };
+      }
+
+      const results = [];
+      for (const router of routers) {
+        const result = await this.deleteRouter(router.deploymentName);
+        results.push(result);
+      }
+
+      return {
+        success: true,
+        message: `Deleted ${routers.length} Router deployment(s)`,
+        results: results
+      };
+
+    } catch (error) {
+      console.error('Error deleting all Routers:', error);
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to delete all Router deployments'
       };
     }
   }

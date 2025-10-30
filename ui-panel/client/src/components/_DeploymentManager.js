@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import {
-  Table,
-  Button,
-  Space,
-  Tag,
+import { 
+  Table, 
+  Button, 
+  Space, 
+  Tag, 
+  Popconfirm,
   message,
   Card,
   Select,
@@ -12,87 +12,108 @@ import {
   Modal,
   Input
 } from 'antd';
-import {
-  DeleteOutlined,
+import { 
+  DeleteOutlined, 
   ReloadOutlined,
   InfoCircleOutlined,
   ExclamationCircleOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  CloseOutlined,
+  CodeOutlined,
   ThunderboltOutlined,
   GlobalOutlined,
-  LockOutlined,
-  CodeOutlined
+  LockOutlined
 } from '@ant-design/icons';
-import {
-  fetchDeployments,
-  undeployModel,
-  scaleDeployment,
-  clearDeployStatus
-} from '../store/slices/inferenceSlice';
-import {
-  selectDeployments,
-  selectInferenceLoading,
-  selectUndeployStatus,
-  selectScaleStatus
-} from '../store/selectors';
+import globalRefreshManager from '../hooks/useGlobalRefresh';
+import operationRefreshManager from '../hooks/useOperationRefresh';
 
 const { Option } = Select;
 
-const DeploymentManagerRedux = () => {
-  // Redux state
-  const dispatch = useDispatch();
-  const deploymentsFromStore = useSelector(selectDeployments);
-  const deployments = Array.isArray(deploymentsFromStore) ? deploymentsFromStore : [];
-  const loading = useSelector(selectInferenceLoading);
-  const undeployStatus = useSelector(selectUndeployStatus);
-  const scaleStatus = useSelector(selectScaleStatus);
-
-  // Local UI state
+const DeploymentManager = () => {
+  const [deployments, setDeployments] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState({});
   const [scaleLoading, setScaleLoading] = useState({});
   const [scaleModalVisible, setScaleModalVisible] = useState(false);
   const [scaleTarget, setScaleTarget] = useState(null);
   const [targetReplicas, setTargetReplicas] = useState(1);
 
-  // Refresh deployments on component mount
-  useEffect(() => {
-    dispatch(fetchDeployments());
+  const fetchDeployments = async (showMessage = true) => {
+    // 如果是从全局刷新管理器调用，不显示loading状态（避免冲突）
+    const isGlobalRefresh = showMessage === undefined;
+    
+    if (!isGlobalRefresh) {
+      setLoading(true);
+    }
+    
+    try {
+      const response = await fetch('/api/deployments');
+      const data = await response.json();
+      setDeployments(data);
+    } catch (error) {
+      console.error('Error fetching deployments:', error);
+      if (!isGlobalRefresh) {
+        message.error('Failed to fetch deployments');
+      }
+      throw error; // 重新抛出错误给全局刷新管理器处理
+    } finally {
+      if (!isGlobalRefresh) {
+        setLoading(false);
+      }
+    }
+  };
 
-    // Reset any operation statuses on unmount
+  // 注册到全局刷新管理器，替代useAutoRefresh
+  useEffect(() => {
+    const componentId = 'deployment-manager';
+    
+    globalRefreshManager.subscribe(componentId, fetchDeployments, {
+      priority: 7 // 高优先级
+    });
+
+    // 注册到操作刷新管理器
+    operationRefreshManager.subscribe(componentId, fetchDeployments);
+
+    // 初始加载
+    fetchDeployments();
+
     return () => {
-      dispatch(clearDeployStatus());
+      globalRefreshManager.unsubscribe(componentId);
+      operationRefreshManager.unsubscribe(componentId);
     };
-  }, [dispatch]);
-
-  // Track undeployment status changes
-  useEffect(() => {
-    if (undeployStatus === 'undeployed') {
-      // Clear any loading states
-      setDeleteLoading({});
-      dispatch(clearDeployStatus());
-    }
-  }, [undeployStatus, dispatch]);
-
-  // Track scale status changes
-  useEffect(() => {
-    if (scaleStatus === 'scaled') {
-      // Close modal and clear loading states when scaling completes
-      setScaleModalVisible(false);
-      setScaleLoading({});
-      dispatch(clearDeployStatus());
-    }
-  }, [scaleStatus, dispatch]);
+  }, []);
 
   const handleUndeploy = async (modelTag) => {
     setDeleteLoading(prev => ({ ...prev, [modelTag]: true }));
-
+    
     try {
-      await dispatch(undeployModel(modelTag)).unwrap();
-      message.success(`Successfully initiated undeploy for ${modelTag}`);
+      const response = await fetch('/api/undeploy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          modelTag,
+          deleteType: 'all'
+        }),
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        // 🚀 触发操作刷新 - 替代直接调用fetchDeployments
+        operationRefreshManager.triggerOperationRefresh('model-undeploy', {
+          modelTag,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        message.error(`Failed to undeploy: ${result.error}`);
+      }
     } catch (error) {
-      console.error('Undeploy error:', error);
-      message.error(`Failed to undeploy model: ${error || 'Unknown error'}`);
+      console.error('Error undeploying:', error);
+      message.error('Failed to undeploy model');
+    } finally {
       setDeleteLoading(prev => ({ ...prev, [modelTag]: false }));
     }
   };
@@ -107,20 +128,36 @@ const DeploymentManagerRedux = () => {
   // 执行Scale操作
   const handleScale = async () => {
     if (!scaleTarget) return;
-
+    
     const deploymentName = scaleTarget.modelTag;
     setScaleLoading(prev => ({ ...prev, [deploymentName]: true }));
-
+    
     try {
-      await dispatch(scaleDeployment({
-        name: deploymentName,
-        replicas: targetReplicas,
-        isModelPool: scaleTarget.deploymentType === 'model-pool'
-      })).unwrap();
+      const response = await fetch('/api/scale-deployment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          deploymentName,
+          replicas: targetReplicas,
+          isModelPool: scaleTarget.deploymentType === 'model-pool'
+        }),
+      });
 
-      message.success(`Deployment ${deploymentName} scaling to ${targetReplicas} replicas`);
+      const result = await response.json();
+      
+      if (result.success) {
+        message.success(`Deployment ${deploymentName} scaled to ${targetReplicas} replicas`);
+        setScaleModalVisible(false);
+        fetchDeployments(); // 刷新数据
+      } else {
+        message.error(`Scale failed: ${result.error}`);
+      }
     } catch (error) {
-      message.error(`Scale failed: ${error}`);
+      console.error('Scale error:', error);
+      message.error('Scale operation failed');
+    } finally {
       setScaleLoading(prev => ({ ...prev, [deploymentName]: false }));
     }
   };
@@ -176,7 +213,7 @@ const DeploymentManagerRedux = () => {
     switch (type) {
       case 'VLLM':
         return <CodeOutlined />;
-      case 'Ollama':
+      case 'SGLang':
         return <ThunderboltOutlined />;
       default:
         return <InfoCircleOutlined />;
@@ -186,7 +223,7 @@ const DeploymentManagerRedux = () => {
   const getTypeColor = (type) => {
     switch (type) {
       case 'VLLM': return 'blue';
-      case 'Ollama': return 'green';
+      case 'SGLang': return 'green';
       default: return 'default';
     }
   };
@@ -220,8 +257,8 @@ const DeploymentManagerRedux = () => {
       title: 'Access',
       key: 'access',
       render: (_, record) => (
-        <Tag
-          color={getAccessColor(record.isExternal)}
+        <Tag 
+          color={getAccessColor(record.isExternal)} 
           icon={getAccessIcon(record.isExternal)}
         >
           {record.isExternal ? 'External' : 'Internal'}
@@ -278,17 +315,17 @@ const DeploymentManagerRedux = () => {
         if (!record.isExternal) {
           return <Tag color="purple">Internal Only</Tag>;
         }
-
+        
         if (ip === 'Pending') {
           return <Tag color="orange">Pending</Tag>;
         }
         if (ip === 'N/A' || !record.hasService) {
           return <Tag color="default">No Service</Tag>;
         }
-
+        
         // 根据部署类型确定端口
-        const port = record.deploymentType === 'VLLM' ? '8000' : '11434';
-
+        const port = (record.deploymentType === 'VLLM' || record.deploymentType === 'SGLang') ? '8000' : '8000';
+        
         return (
           <Tooltip title={`http://${ip}:${port}`}>
             <span style={{ fontFamily: 'monospace', fontSize: '11px' }}>
@@ -309,7 +346,7 @@ const DeploymentManagerRedux = () => {
         const diffMins = Math.floor(diffMs / 60000);
         const diffHours = Math.floor(diffMins / 60);
         const diffDays = Math.floor(diffHours / 24);
-
+        
         let ageText;
         if (diffDays > 0) {
           ageText = `${diffDays}d ago`;
@@ -318,7 +355,7 @@ const DeploymentManagerRedux = () => {
         } else {
           ageText = `${diffMins}m ago`;
         }
-
+        
         return (
           <Tooltip title={date.toLocaleString()}>
             <span style={{ fontSize: '12px', color: '#666' }}>
@@ -361,81 +398,37 @@ const DeploymentManagerRedux = () => {
   const deploymentStats = deployments.reduce((acc, deployment) => {
     acc.total++;
     if (deployment.deploymentType === 'VLLM') acc.vllm++;
-    if (deployment.deploymentType === 'SGLang') acc.sglang++;
-    if (deployment.deploymentType === 'model-pool') acc.modelPool++;
+    if (deployment.deploymentType === 'Ollama') acc.ollama++;
     if (deployment.status === 'Ready') acc.ready++;
     if (deployment.isExternal) acc.external++;
     return acc;
-  }, { total: 0, vllm: 0, sglang: 0, modelPool: 0, ready: 0, external: 0 });
+  }, { total: 0, vllm: 0, ollama: 0, ready: 0, external: 0 });
 
   return (
-    <div style={{ padding: '16px' }}>
-      {/* 刷新按钮 - 匹配 Pods/Services 风格 */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '16px'
-      }}>
-        <div></div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+    <Card 
+      title={
+        <Space>
+          <span>Deployment Management</span>
+          <Tag color="blue">{deploymentStats.total} total</Tag>
+          <Tag color="blue" icon={<CodeOutlined />}>{deploymentStats.vllm} VLLM</Tag>
+          <Tag color="green" icon={<ThunderboltOutlined />}>{deploymentStats.ollama} Ollama</Tag>
+          <Tag color="success">{deploymentStats.ready} ready</Tag>
+          <Tag color="orange" icon={<GlobalOutlined />}>{deploymentStats.external} external</Tag>
+        </Space>
+      }
+      extra={
+        <Space>
           <Button
-            size="small"
-            icon={<ReloadOutlined />}
+            icon={<ReloadOutlined />} 
+            onClick={() => fetchDeployments(true)}
             loading={loading}
-            onClick={() => dispatch(fetchDeployments())}
+            size="small"
           >
             Refresh
           </Button>
-        </div>
-      </div>
-
-      {/* 统计卡片 - 匹配 Pods/Services 风格 */}
-      <div style={{
-        marginBottom: 16,
-        padding: 12,
-        backgroundColor: '#f5f5f5',
-        borderRadius: 6,
-        display: 'flex',
-        justifyContent: 'space-around'
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#1890ff' }}>
-            {deploymentStats.total}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>Total</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#52c41a' }}>
-            {deploymentStats.ready}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>Ready</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#1890ff' }}>
-            {deploymentStats.vllm}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>VLLM</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#722ed1' }}>
-            {deploymentStats.sglang}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>SGLang</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#13c2c2' }}>
-            {deploymentStats.modelPool}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>Model Pool</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#faad14' }}>
-            {deploymentStats.external}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>External</div>
-        </div>
-      </div>
+        </Space>
+      }
+    >
       {deployments.length === 0 && !loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
           <InfoCircleOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
@@ -452,21 +445,23 @@ const DeploymentManagerRedux = () => {
           loading={loading}
           size="small"
           pagination={false}
+          scroll={{ x: 1000 }}
         />
       )}
-
+      
       <div style={{ marginTop: 16, padding: 12, backgroundColor: '#f6f8fa', borderRadius: 6 }}>
         <div style={{ fontSize: '12px', color: '#666', marginBottom: 8 }}>
           <strong>💡 Tips:</strong>
         </div>
         <div style={{ fontSize: '11px', color: '#888' }}>
           • <strong>VLLM</strong>: OpenAI-compatible API on port 8000<br/>
+          • <strong>Ollama</strong>: Native Ollama API on port 11434<br/>
           • <strong>External</strong>: Internet-facing LoadBalancer (internet-facing)<br/>
           • <strong>Internal</strong>: Internal-only LoadBalancer (internal scheme)<br/>
           • Click <strong>Delete</strong> to remove both deployment and service completely
         </div>
       </div>
-
+      
       {/* Scale Modal */}
       <Modal
         title={`Scale Deployment: ${scaleTarget?.modelTag}`}
@@ -507,8 +502,8 @@ const DeploymentManagerRedux = () => {
           />
         </div>
       </Modal>
-    </div>
+    </Card>
   );
 };
 
-export default DeploymentManagerRedux;
+export default DeploymentManager;

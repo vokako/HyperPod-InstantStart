@@ -19,7 +19,7 @@ export const fetchTrainingJobs = createAsyncThunk(
   'training/fetchTrainingJobs',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await fetch('/api/training-jobs');
+      const response = await fetch('/api/hyperpod-jobs');
       if (!response.ok) throw new Error('Failed to fetch training jobs');
       return await response.json();
     } catch (error) {
@@ -128,7 +128,7 @@ export const deleteTrainingJob = createAsyncThunk(
   'training/deleteTrainingJob',
   async (jobName, { rejectWithValue }) => {
     try {
-      const response = await fetch(`/api/training-jobs/${jobName}`, {
+      const response = await fetch(`/api/hyperpod-jobs/${jobName}`, {
         method: 'DELETE',
       });
 

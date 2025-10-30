@@ -7,11 +7,28 @@ class EKSServiceHelper {
    * 生成External LoadBalancer Service YAML
    * @param {string} servEngine - 服务引擎名称 (vllm, sglang, custom)
    * @param {string} modelTag - 模型标签
-   * @param {number} port - 端口号
+   * @param {number|Object} port - 端口号或端口配置对象 {http: 8000, metrics: 9000}
    * @param {string} nlbAnnotations - NLB注解
    * @returns {string} Service YAML字符串
    */
   static generateExternalService(servEngine, modelTag, port, nlbAnnotations) {
+    // 支持多端口配置
+    let portsSection;
+    if (typeof port === 'object' && port !== null) {
+      // 多端口模式 (Router等)
+      portsSection = Object.entries(port).map(([name, portNum]) =>
+        `    - name: ${name}
+      port: ${portNum}
+      targetPort: ${portNum}
+      protocol: TCP`
+      ).join('\n');
+    } else {
+      // 单端口模式 (普通推理服务)
+      portsSection = `    - port: ${port}
+      protocol: TCP
+      targetPort: http`;
+    }
+
     return `---
 apiVersion: v1
 kind: Service
@@ -24,9 +41,7 @@ metadata:
   annotations:${nlbAnnotations}
 spec:
   ports:
-    - port: ${port}
-      protocol: TCP
-      targetPort: http
+${portsSection}
   selector:
     app: ${servEngine}-${modelTag}-inference
   type: LoadBalancer`;
@@ -36,10 +51,28 @@ spec:
    * 生成ClusterIP Service YAML
    * @param {string} servEngine - 服务引擎名称 (vllm, sglang, custom)
    * @param {string} modelTag - 模型标签
-   * @param {number} port - 端口号
+   * @param {number|Object} port - 端口号或端口配置对象 {http: 8000, metrics: 9000}
    * @returns {string} Service YAML字符串
    */
   static generateClusterIPService(servEngine, modelTag, port) {
+    // 支持多端口配置
+    let portsSection;
+    if (typeof port === 'object' && port !== null) {
+      // 多端口模式 (Router等)
+      portsSection = Object.entries(port).map(([name, portNum]) =>
+        `  - name: ${name}
+    port: ${portNum}
+    targetPort: ${portNum}
+    protocol: TCP`
+      ).join('\n');
+    } else {
+      // 单端口模式 (普通推理服务)
+      portsSection = `  - name: http
+    port: ${port}
+    targetPort: ${port}
+    protocol: TCP`;
+    }
+
     return `---
 apiVersion: v1
 kind: Service
@@ -54,10 +87,7 @@ spec:
   selector:
     app: ${servEngine}-${modelTag}-inference
   ports:
-  - name: http
-    port: ${port}
-    targetPort: ${port}
-    protocol: TCP`;
+${portsSection}`;
   }
 
   /**

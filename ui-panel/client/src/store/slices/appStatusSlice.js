@@ -58,7 +58,7 @@ export const fetchRayJobs = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       console.log('Fetching RayJobs status via Redux...');
-      const response = await fetch('/api/ray-jobs');
+      const response = await fetch('/api/rayjobs');
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -130,13 +130,13 @@ export const fetchDeployments = createAsyncThunk(
   }
 );
 
-// 异步操作：获取训练任务状态
+// 异步操作：获取训练任务状态（只包括HyperPod，不包括RayJob）
 export const fetchTrainingJobs = createAsyncThunk(
   'appStatus/fetchTrainingJobs',
   async (_, { rejectWithValue }) => {
     try {
-      console.log('Fetching training jobs status via Redux...');
-      const response = await fetch('/api/training-jobs');
+      console.log('Fetching HyperPod training jobs status via Redux...');
+      const response = await fetch('/api/hyperpod-jobs');
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);

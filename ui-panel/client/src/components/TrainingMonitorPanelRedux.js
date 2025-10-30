@@ -290,7 +290,7 @@ const TrainingMonitorPanelRedux = () => {
   const fetchJobPods = async (jobName) => {
     setPodsLoading(true);
     try {
-      const response = await fetch(`/api/training-jobs/${jobName}/pods`);
+      const response = await fetch(`/api/hyperpod-jobs/${jobName}/pods`);
       const result = await response.json();
 
       if (result.success) {

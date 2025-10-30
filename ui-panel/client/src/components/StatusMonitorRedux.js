@@ -77,7 +77,10 @@ const StatusMonitorRedux = ({ activeTab }) => {
   const [scalingDeployments, setScalingDeployments] = useState(new Set());      // 新增
   const [deletingTrainingJobs, setDeletingTrainingJobs] = useState(new Set());  // 新增
 
-  // Scale Modal 状态 - 匹配原始DeploymentManager
+  // 🔄 Badge同步状态 - 确保Badge数字与表格数据完全同步
+  const [localRefreshTrigger, setLocalRefreshTrigger] = useState(0);
+
+  // Scale Modal 状态 - 继承原部署管理功能
   const [scaleModalVisible, setScaleModalVisible] = useState(false);
   const [scaleTarget, setScaleTarget] = useState(null);
   const [targetReplicas, setTargetReplicas] = useState(1);
@@ -91,6 +94,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
   const handleRefresh = useCallback(async () => {
     try {
       await dispatch(refreshAllAppStatus()).unwrap();
+      // 🔄 强制Badge重新渲染，确保与表格数据同步
+      setLocalRefreshTrigger(prev => prev + 1);
       message.success('App status refreshed successfully');
     } catch (error) {
       console.error('Error refreshing app status:', error);
@@ -116,6 +121,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         message.success(`Service ${serviceName} deleted successfully`);
         // 触发刷新
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
       } else {
         message.error(`Failed to delete service: ${result.error}`);
       }
@@ -171,6 +178,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         message.success(`Pod ${podName} assigned to ${businessTag}`);
         // 🚀 触发统一刷新机制更新所有数据
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
       } else {
         message.error(result.error || 'Assignment failed');
       }
@@ -198,6 +207,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         message.success(`RayJob ${jobName} deletion initiated`);
         // 刷新数据
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
       } else {
         const error = await response.json();
         message.error(`Failed to delete RayJob: ${error.error}`);
@@ -210,34 +221,51 @@ const StatusMonitorRedux = ({ activeTab }) => {
     }
   };
 
-  // 删除部署
-  const handleDeploymentDelete = async (deploymentName) => {
+  // 统一删除部署（支持Router和模型）
+  const handleDeploymentDelete = async (deploymentName, deploymentType, isRouter) => {
     setDeletingDeployments(prev => new Set([...prev, deploymentName]));
 
     try {
-      const response = await fetch('/api/undeploy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          modelTag: deploymentName, // 后端仍期望 modelTag 字段
-          deleteType: 'all'
-        }),
-      });
+      let response;
+
+      // 根据类型选择不同的删除API
+      if (isRouter || deploymentType === 'Router') {
+        // Router删除：使用Router专用API
+        console.log(`Deleting Router deployment: ${deploymentName}`);
+        response = await fetch(`/api/routers/${deploymentName}`, {
+          method: 'DELETE'
+        });
+      } else {
+        // 模型删除：使用原有的undeploy逻辑
+        console.log(`Deleting model deployment: ${deploymentName}`);
+        response = await fetch('/api/undeploy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            modelTag: deploymentName, // 后端仍期望 modelTag 字段
+            deleteType: 'all'
+          }),
+        });
+      }
 
       const result = await response.json();
 
       if (result.success) {
-        message.success(`Deployment ${deploymentName} deleted successfully`);
+        message.success(`${deploymentType} deployment "${deploymentName}" deleted successfully`);
         // 刷新数据
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
+
+        console.log(`Deployment deletion successful:`, result);
       } else {
-        message.error(`Failed to delete deployment: ${result.error}`);
+        message.error(`Failed to delete ${deploymentType} deployment: ${result.error || result.message}`);
       }
     } catch (error) {
       console.error('Error deleting deployment:', error);
-      message.error('Failed to delete deployment');
+      message.error(`Failed to delete ${deploymentType || 'deployment'}: ${error.message}`);
     } finally {
       setDeletingDeployments(prev => {
         const newSet = new Set(prev);
@@ -271,6 +299,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         message.success(`Deployment ${deploymentName} scaled to ${targetReplicas} replicas`);
         // 刷新数据
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
       } else {
         message.error(`Scale failed: ${result.error}`);
       }
@@ -291,7 +321,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
     setDeletingTrainingJobs(prev => new Set([...prev, jobName]));
 
     try {
-      const response = await fetch(`/api/training-jobs/${jobName}`, {
+      const response = await fetch(`/api/hyperpod-jobs/${jobName}`, {
         method: 'DELETE'
       });
 
@@ -301,6 +331,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         message.success(`Training job ${jobName} deleted successfully`);
         // 刷新数据
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
       } else {
         message.error(`Failed to delete training job: ${result.error}`);
       }
@@ -316,14 +348,14 @@ const StatusMonitorRedux = ({ activeTab }) => {
     }
   };
 
-  // Scale Modal 功能 - 匹配原始DeploymentManager
+  // Scale Modal 功能 - 继承原部署管理功能
   const showScaleModal = (deployment) => {
     setScaleTarget(deployment);
     setTargetReplicas(deployment.replicas);
     setScaleModalVisible(true);
   };
 
-  // 执行Scale操作 - 匹配原始DeploymentManager
+  // 执行Scale操作 - 继承原部署管理功能
   const handleScale = async () => {
     if (!scaleTarget) return;
 
@@ -350,6 +382,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         setScaleModalVisible(false);
         // 刷新数据
         await dispatch(refreshAllAppStatus());
+        // 🔄 强制Badge重新渲染
+        setLocalRefreshTrigger(prev => prev + 1);
       } else {
         message.error(`Scale failed: ${result.error}`);
       }
@@ -365,7 +399,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
     }
   };
 
-  // Delete Confirmation Modal - 匹配原始DeploymentManager
+  // Delete Confirmation Modal - 继承原部署管理功能
   const showDeleteConfirmation = (record) => {
     Modal.confirm({
       title: `Delete ${record.deploymentName} deployment`,
@@ -386,7 +420,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
       cancelText: 'Cancel',
       width: 450,
       onOk() {
-        handleDeploymentDelete(record.deploymentName);
+        handleDeploymentDelete(record.deploymentName, record.deploymentType, record.isRouter);
       },
       onCancel() {
         console.log('Delete cancelled');
@@ -790,13 +824,15 @@ const StatusMonitorRedux = ({ activeTab }) => {
       dataIndex: 'deploymentType',
       key: 'deploymentType',
       render: (type) => {
-        // 匹配原始DeploymentManager的图标和颜色
+        // 继承原部署管理的图标和颜色
         const getTypeIcon = (type) => {
           switch (type) {
             case 'VLLM':
               return <CodeOutlined />;
-            case 'Ollama':
+            case 'SGLang':
               return <ThunderboltOutlined />;
+            case 'Router':
+              return <ApiOutlined />;
             default:
               return <InfoCircleOutlined />;
           }
@@ -805,7 +841,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
         const getTypeColor = (type) => {
           switch (type) {
             case 'VLLM': return 'blue';
-            case 'Ollama': return 'green';
+            case 'SGLang': return 'green';
+            case 'Router': return 'purple';
             default: return 'default';
           }
         };
@@ -844,7 +881,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
       dataIndex: 'status',
       key: 'status',
       render: (status, record) => {
-        // 匹配原始DeploymentManager的状态图标和颜色
+        // 继承原部署管理的状态图标和颜色
         const getStatusIcon = (status) => {
           switch (status) {
             case 'Ready':
@@ -909,8 +946,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
           return <Tag color="default">No Service</Tag>;
         }
 
-        // 根据部署类型确定端口
-        const port = record.deploymentType === 'VLLM' ? '8000' : '11434';
+        // 根据部署类型确定端口 (VLLM和SGLang都使用8000)
+        const port = '8000';
 
         return (
           <Tooltip title={`http://${ip}:${port}`}>
@@ -1189,8 +1226,8 @@ const StatusMonitorRedux = ({ activeTab }) => {
     return null;
   };
 
-  // 通用刷新按钮
-  const refreshButton = (
+  // 🔄 刷新按钮现在移到了全局App Status tab行，各个tab内不再显示
+  const refreshButton = activeTab ? null : (
     <div style={{
       display: 'flex',
       justifyContent: 'space-between',
@@ -1327,7 +1364,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
             }}
           />
 
-          {/* Scale Modal - 匹配原始DeploymentManager */}
+          {/* Scale Modal - 继承原部署管理功能 */}
           <Modal
             title={`Scale Deployment: ${scaleTarget?.deploymentName}`}
             open={scaleModalVisible}
@@ -1374,22 +1411,6 @@ const StatusMonitorRedux = ({ activeTab }) => {
     if (activeTab === 'jobs') {
       return (
         <div>
-          {/* 匹配原始HyperPodJobManager的标题布局 */}
-          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text type="secondary">
-              HyperPod PyTorchJob Management
-            </Text>
-            <Space>
-              <Button
-                size="small"
-                icon={<ReloadOutlined />}
-                loading={loading}
-                onClick={handleRefresh}
-              >
-                Refresh
-              </Button>
-            </Space>
-          </div>
 
           {error && (
             <Alert
@@ -1439,7 +1460,11 @@ const StatusMonitorRedux = ({ activeTab }) => {
           <Space>
             <ContainerOutlined />
             Pods
-            <Badge count={pods.length} style={{ backgroundColor: '#1890ff' }} />
+            <Badge
+              key={`pods-${pods.length}-${localRefreshTrigger}`}
+              count={pods.length}
+              style={{ backgroundColor: '#1890ff' }}
+            />
           </Space>
         }
         key="pods"
@@ -1471,7 +1496,11 @@ const StatusMonitorRedux = ({ activeTab }) => {
           <Space>
             <ApiOutlined />
             Services
-            <Badge count={services.length} style={{ backgroundColor: '#52c41a' }} />
+            <Badge
+              key={`services-${services.length}-${localRefreshTrigger}`}
+              count={services.length}
+              style={{ backgroundColor: '#52c41a' }}
+            />
           </Space>
         }
         key="services"
@@ -1503,7 +1532,6 @@ const StatusMonitorRedux = ({ activeTab }) => {
           <Space>
             <ApiOutlined />
             RayJobs
-            <Badge count={rayJobs.length} style={{ backgroundColor: '#722ed1' }} />
           </Space>
         }
         key="rayjobs"
