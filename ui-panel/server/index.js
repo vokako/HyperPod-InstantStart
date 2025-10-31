@@ -8481,6 +8481,90 @@ app.post('/api/deploy-keda-scaling', async (req, res) => {
   }
 });
 
+// 统一扩缩容 - 预览 YAML
+app.post('/api/keda/unified/preview', async (req, res) => {
+  try {
+    const config = req.body;
+    console.log('Generating unified KEDA preview for service:', config.serviceName);
+
+    const result = await KedaManager.previewUnifiedScalingYaml(config);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        yaml: result.yaml,
+        config: result.config
+      });
+    } else {
+      console.log('Preview validation failed:', result.errors);
+      res.status(400).json({
+        success: false,
+        error: result.error,
+        errors: result.errors
+      });
+    }
+  } catch (error) {
+    console.error('Error generating unified KEDA preview:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 统一扩缩容 - 部署配置
+app.post('/api/deploy-keda-scaling-unified', async (req, res) => {
+  try {
+    const config = req.body;
+    console.log('Deploying unified KEDA scaling with config:', config);
+
+    const result = await KedaManager.applyUnifiedScalingConfiguration(config);
+
+    if (result.success) {
+      // 广播成功消息
+      broadcast({
+        type: 'keda_unified_deployment',
+        status: 'success',
+        message: 'Unified KEDA scaling configuration deployed successfully',
+        serviceName: config.serviceName,
+        deploymentName: config.deploymentName,
+        enabledTriggers: config.enabledTriggers,
+        yamlPath: result.yamlPath,
+        timestamp: new Date().toISOString()
+      });
+
+      res.json({
+        success: true,
+        message: result.message,
+        yamlPath: result.yamlPath,
+        generatedYaml: result.generatedYaml
+      });
+    } else {
+      // 广播错误消息
+      broadcast({
+        type: 'keda_unified_deployment',
+        status: 'error',
+        message: result.message,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        message: result.message,
+        errors: result.errors
+      });
+    }
+  } catch (error) {
+    console.error('Error deploying unified KEDA scaling:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // 获取 KEDA 状态
 app.get('/api/keda/status', async (req, res) => {
   try {
@@ -8715,6 +8799,26 @@ app.get('/api/routers', async (req, res) => {
       success: false,
       error: error.message,
       message: 'Failed to get Router deployments'
+    });
+  }
+});
+
+// 获取Router Services列表（用于KEDA配置）
+app.get('/api/router-services', async (req, res) => {
+  try {
+    console.log('Getting Router services list');
+    const services = await RoutingManager.getRouterServices();
+    res.json({
+      success: true,
+      services: services,
+      count: services.length
+    });
+  } catch (error) {
+    console.error('Error getting Router services:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to get Router services'
     });
   }
 });
