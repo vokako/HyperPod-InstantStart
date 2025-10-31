@@ -1510,22 +1510,23 @@ const StatusMonitorRedux = ({ activeTab }) => {
   // 完整的Tabs视图（当没有指定activeTab时）
 
   return (
-    <Tabs defaultActiveKey="pods" size="small">
-      <TabPane
-        tab={
-          <Space>
-            <ContainerOutlined />
-            Pods
-            <Badge
-              key={`pods-${pods.length}-${localRefreshTrigger}`}
-              count={pods.length}
-              style={{ backgroundColor: '#1890ff' }}
-            />
-          </Space>
-        }
-        key="pods"
-      >
-        <div style={{ padding: '16px' }}>
+    <div style={{ padding: '0 16px' }}>
+      <Tabs defaultActiveKey="pods" size="small">
+        <TabPane
+          tab={
+            <Space>
+              <ContainerOutlined />
+              Pods
+              <Badge
+                key={`pods-${pods.length}-${localRefreshTrigger}`}
+                count={pods.length}
+                style={{ backgroundColor: '#1890ff' }}
+              />
+            </Space>
+          }
+          key="pods"
+        >
+          <div style={{ paddingTop: '16px' }}>
           {error && (
             <Alert
               message="App Status Error"
@@ -1614,6 +1615,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
         </div>
       </TabPane>
     </Tabs>
+    </div>
   );
 };
 

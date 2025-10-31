@@ -61,8 +61,16 @@ class KarpenterManager {
       this.log(logFile, 'Step 6: Installing monitoring components...');
       await this.installMonitoringComponents(stackInfo, logFile);
 
-      // 步骤7: 更新cluster metadata
-      this.log(logFile, 'Step 7: Updating cluster metadata...');
+      // 步骤7: 安装GPU和EFA依赖
+      this.log(logFile, 'Step 7: Installing GPU and EFA dependencies...');
+      const clusterDir = clusterManager.getClusterDir(clusterTag);
+      const configDir = path.join(clusterDir, 'config');
+      const EksNodeGroupDependencyManager = require('./eksNodeGroupDependencyManager');
+      await EksNodeGroupDependencyManager.installCustomDependencies(configDir, 'karpenter');
+      this.log(logFile, 'GPU and EFA dependencies installed successfully');
+
+      // 步骤8: 更新cluster metadata
+      this.log(logFile, 'Step 8: Updating cluster metadata...');
       const installationDetails = {
         installed: true,
         version: this.KARPENTER_VERSION,

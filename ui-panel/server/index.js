@@ -856,8 +856,8 @@ app.post('/api/deploy', async (req, res) => {
       }
     }
     
-    // 保存到项目目录中的deployments文件夹
-    const deploymentsDir = path.join(__dirname, '../deployments');
+    // 保存到项目目录中的deployments/inference文件夹
+    const deploymentsDir = path.join(__dirname, '../deployments/inference');
     if (!fs.existsSync(deploymentsDir)) {
       fs.mkdirSync(deploymentsDir, { recursive: true });
     }
@@ -1177,10 +1177,6 @@ ${indentedConfig}`;
     const tempFileName = `torch-training-${trainingJobName}-${timestamp}.yaml`;
     const tempFilePath = path.join(__dirname, '../temp', tempFileName);
 
-    // 生成永久保存的文件名（保存到templates/training/目录）
-    const permanentFileName = `torch_${timestamp}.yaml`;
-    const permanentFilePath = path.join(__dirname, '../templates/training', permanentFileName);
-
     // 生成部署文件名（保存到deployments/trainings/目录）
     const deploymentFileName = `torch_${timestamp}.yaml`;
     const deploymentFilePath = path.join(__dirname, '../deployments/trainings', deploymentFileName);
@@ -1189,12 +1185,6 @@ ${indentedConfig}`;
     const tempDir = path.join(__dirname, '../temp');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
-    }
-
-    // 确保templates/training目录存在
-    const trainingTemplateDir = path.join(__dirname, '../templates/training');
-    if (!fs.existsSync(trainingTemplateDir)) {
-      fs.mkdirSync(trainingTemplateDir, { recursive: true });
     }
 
     // 确保deployments/trainings目录存在
@@ -1206,10 +1196,6 @@ ${indentedConfig}`;
     // 写入临时文件（用于kubectl apply）
     await fs.writeFile(tempFilePath, newYamlContent);
     console.log(`Torch training YAML written to temp file: ${tempFilePath}`);
-
-    // 写入永久文件（保存到templates/training/目录）
-    await fs.writeFile(permanentFilePath, newYamlContent);
-    console.log(`Torch training YAML saved permanently to: ${permanentFilePath}`);
 
     // 写入部署文件（保存到deployments/trainings/目录）
     await fs.writeFile(deploymentFilePath, newYamlContent);
@@ -1239,8 +1225,8 @@ ${indentedConfig}`;
       success: true,
       message: `Torch training job "${trainingJobName}" launched successfully`,
       trainingJobName: trainingJobName,
-      savedTemplate: permanentFileName,
-      savedTemplatePath: permanentFilePath,
+      savedTemplate: deploymentFileName,
+      savedTemplatePath: deploymentFilePath,
       output: applyOutput
     });
 
@@ -1543,10 +1529,6 @@ ${indentedConfig}`;
     const tempFileName = `training-${trainingJobName}-${timestamp}.yaml`;
     const tempFilePath = path.join(__dirname, '../temp', tempFileName);
 
-    // 生成永久保存的文件名（保存到templates/training/目录）
-    const permanentFileName = `lma_${timestamp}.yaml`;
-    const permanentFilePath = path.join(__dirname, '../templates/training', permanentFileName);
-
     // 生成部署文件名（保存到deployments/trainings/目录）
     const deploymentFileName = `lma_${timestamp}.yaml`;
     const deploymentFilePath = path.join(__dirname, '../deployments/trainings', deploymentFileName);
@@ -1557,19 +1539,19 @@ ${indentedConfig}`;
       fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    // 确保templates/training目录存在
-    const trainingTemplateDir = path.join(__dirname, '../templates/training');
-    if (!fs.existsSync(trainingTemplateDir)) {
-      fs.mkdirSync(trainingTemplateDir, { recursive: true });
+    // 确保deployments/trainings目录存在
+    const trainingDeploymentDir = path.join(__dirname, '../deployments/trainings');
+    if (!fs.existsSync(trainingDeploymentDir)) {
+      fs.mkdirSync(trainingDeploymentDir, { recursive: true });
     }
 
     // 写入临时文件（用于kubectl apply）
     await fs.writeFile(tempFilePath, newYamlContent);
     console.log(`Training YAML written to temp file: ${tempFilePath}`);
 
-    // 写入永久文件（保存到templates/training/目录）
-    await fs.writeFile(permanentFilePath, newYamlContent);
-    console.log(`Training YAML saved permanently to: ${permanentFilePath}`);
+    // 写入部署文件（保存到deployments/trainings/目录）
+    await fs.writeFile(deploymentFilePath, newYamlContent);
+    console.log(`Training YAML saved to deployments: ${deploymentFilePath}`);
 
     // 应用YAML配置 - 训练任务可能需要更长时间
     const applyOutput = await executeKubectl(`apply -f ${tempFilePath}`, 60000); // 60秒超时
@@ -1595,8 +1577,8 @@ ${indentedConfig}`;
       success: true,
       message: `Training job "${trainingJobName}" launched successfully`,
       trainingJobName: trainingJobName,
-      savedTemplate: permanentFileName,
-      savedTemplatePath: permanentFilePath,
+      savedTemplate: deploymentFileName,
+      savedTemplatePath: deploymentFilePath,
       output: applyOutput
     });
 
@@ -2305,6 +2287,145 @@ app.delete('/api/rayjobs/:jobName', async (req, res) => {
       message: `Failed to delete RayJob: ${error.message}`
     });
     
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 获取指定 RayJob 的 pods
+app.get('/api/rayjobs/:jobName/pods', async (req, res) => {
+  try {
+    const { jobName } = req.params;
+    console.log(`Fetching pods for RayJob: ${jobName}`);
+
+    // 首先获取RayJob信息来找到对应的RayCluster名称
+    const rayjobOutput = await executeKubectl(`get rayjob ${jobName} -o json`);
+    const rayJob = JSON.parse(rayjobOutput);
+    const rayClusterName = rayJob.status?.rayClusterName;
+
+    let allPods = [];
+
+    // 获取属于该RayCluster的所有pods（如果RayCluster存在）
+    if (rayClusterName) {
+      const rayClusterPodsOutput = await executeKubectl(`get pods -l ray.io/cluster=${rayClusterName} -o json`);
+      const rayClusterResult = JSON.parse(rayClusterPodsOutput);
+
+      const rayClusterPods = rayClusterResult.items.map(pod => ({
+        name: pod.metadata.name,
+        status: pod.status.phase,
+        ready: pod.status.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+        restartCount: pod.status.containerStatuses?.[0]?.restartCount || 0,
+        creationTimestamp: pod.metadata.creationTimestamp,
+        node: pod.spec.nodeName,
+        type: pod.metadata.labels?.['ray.io/node-type'] || 'ray-node'
+      }));
+
+      allPods.push(...rayClusterPods);
+      console.log(`Found ${rayClusterPods.length} RayCluster pods for ${jobName} (cluster: ${rayClusterName})`);
+    }
+
+    // 获取Job submitter pod（使用job-name标签）
+    try {
+      const jobPodsOutput = await executeKubectl(`get pods -l job-name=${jobName} -o json`);
+      const jobResult = JSON.parse(jobPodsOutput);
+
+      const jobSubmitterPods = jobResult.items.map(pod => ({
+        name: pod.metadata.name,
+        status: pod.status.phase,
+        ready: pod.status.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+        restartCount: pod.status.containerStatuses?.[0]?.restartCount || 0,
+        creationTimestamp: pod.metadata.creationTimestamp,
+        node: pod.spec.nodeName,
+        type: 'job-submitter'
+      }));
+
+      allPods.push(...jobSubmitterPods);
+      console.log(`Found ${jobSubmitterPods.length} job submitter pods for ${jobName}`);
+    } catch (jobError) {
+      console.log(`No job submitter pods found for ${jobName}: ${jobError.message}`);
+    }
+
+    console.log(`Total ${allPods.length} pods found for RayJob ${jobName}`);
+
+    res.json({
+      success: true,
+      pods: allPods
+    });
+  } catch (error) {
+    console.error('Error fetching RayJob pods:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      pods: []
+    });
+  }
+});
+
+// 统一的训练作业 API - 合并 HyperPod 和 RayJob
+app.get('/api/training-jobs', async (req, res) => {
+  try {
+    console.log('🔍 [API Call] /api/training-jobs requested from:', req.ip || req.connection.remoteAddress);
+
+    const allJobs = [];
+
+    // 获取 HyperPod 作业
+    let hyperpodJobs = [];
+    try {
+      const hyperpodOutput = await executeKubectl('get hyperpodpytorchjob -o json');
+      const hyperpodResult = JSON.parse(hyperpodOutput);
+      hyperpodJobs = hyperpodResult.items.map(job => ({
+        name: job.metadata.name,
+        namespace: job.metadata.namespace || 'default',
+        creationTimestamp: job.metadata.creationTimestamp,
+        status: job.status || {},
+        type: 'hyperpod',
+        spec: {
+          replicas: job.spec?.replicaSpecs?.[0]?.replicas || 0,
+          nprocPerNode: job.spec?.nprocPerNode || 0
+        }
+      }));
+    } catch (error) {
+      console.log('No HyperPod jobs found:', error.message);
+    }
+
+    // 获取 RayJob 作业
+    let rayJobs = [];
+    try {
+      const rayjobOutput = await executeKubectl('get rayjobs -o json');
+      const rayjobResult = JSON.parse(rayjobOutput);
+      rayJobs = rayjobResult.items.map(rayJob => {
+        const workerReplicas = rayJob.spec?.rayClusterSpec?.workerGroupSpecs?.reduce((total, group) =>
+          total + (group.replicas || 0), 0) || 0;
+        const totalReplicas = workerReplicas + 1; // head + workers
+
+        return {
+          name: rayJob.metadata.name,
+          namespace: rayJob.metadata.namespace || 'default',
+          creationTimestamp: rayJob.metadata.creationTimestamp,
+          status: rayJob.status || {},
+          type: 'rayjob',
+          spec: {
+            replicas: totalReplicas
+          }
+        };
+      });
+    } catch (error) {
+      console.log('No RayJobs found:', error.message);
+    }
+
+    // 合并所有作业
+    allJobs.push(...hyperpodJobs, ...rayJobs);
+
+    console.log(`Aggregated ${allJobs.length} training jobs:`, allJobs.map(j => `${j.name} (${j.type})`));
+
+    res.json({
+      success: true,
+      jobs: allJobs
+    });
+  } catch (error) {
+    console.error('Test aggregation error:', error);
     res.status(500).json({
       success: false,
       error: error.message

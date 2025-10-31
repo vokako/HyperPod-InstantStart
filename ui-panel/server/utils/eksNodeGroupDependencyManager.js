@@ -113,8 +113,8 @@ class EksNodeGroupDependencyManager {
     console.log(`Installing custom dependencies for node group: ${nodeGroupName}`);
     
     const commands = `cd ${configDir} && bash -c 'source init_envs && 
-    kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml
-    helm install efa eks/aws-efa-k8s-device-plugin -n kube-system
+    kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml && 
+    helm upgrade --install efa eks/aws-efa-k8s-device-plugin -n kube-system
     '`;
     
     try {

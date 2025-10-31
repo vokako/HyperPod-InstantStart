@@ -1066,6 +1066,7 @@ function App() {
               <Tabs
                 defaultActiveKey="pods"
                 size="small"
+                style={{ padding: '0 16px' }}
                 tabBarExtraContent={
                   <div style={{ marginRight: '12px' }}>
                     <Button

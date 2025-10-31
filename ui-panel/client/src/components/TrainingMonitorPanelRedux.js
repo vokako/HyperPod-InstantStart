@@ -286,11 +286,25 @@ const TrainingMonitorPanelRedux = () => {
     console.log(`Log stream stopped for pod: ${podName}`);
   };
 
-  // 获取训练任务的pods
+  // 获取训练任务的pods - 根据作业类型调用不同API
   const fetchJobPods = async (jobName) => {
     setPodsLoading(true);
     try {
-      const response = await fetch(`/api/hyperpod-jobs/${jobName}/pods`);
+      // 找到对应的作业信息以确定类型
+      const job = trainingJobs.find(j => j.name === jobName);
+      if (!job) {
+        throw new Error(`Job ${jobName} not found`);
+      }
+
+      // 根据作业类型调用不同的API
+      let apiUrl;
+      if (job.type === 'rayjob') {
+        apiUrl = `/api/rayjobs/${jobName}/pods`;
+      } else {
+        apiUrl = `/api/hyperpod-jobs/${jobName}/pods`;
+      }
+
+      const response = await fetch(apiUrl);
       const result = await response.json();
 
       if (result.success) {
@@ -452,6 +466,23 @@ const TrainingMonitorPanelRedux = () => {
     }
   }, [activeJob]);
 
+  // Effect to clear selected job when training jobs list becomes empty
+  useEffect(() => {
+    if (trainingJobs.length === 0 && selectedJob) {
+      console.log('Training jobs list is empty, clearing selected job');
+      dispatch(setActiveJob(null));
+      setSelectedJob(null);
+      setJobPods([]);
+      setLogs({});
+      setLogStreaming({});
+      
+      // Stop all log streams
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({ type: 'stop_all_log_streams' }));
+      }
+    }
+  }, [trainingJobs.length, selectedJob, dispatch, websocket]);
+
   // 渲染日志内容
   const renderLogs = () => {
     if (jobPods.length === 0) {
@@ -593,6 +624,9 @@ const TrainingMonitorPanelRedux = () => {
                   <Option key={job.name} value={job.name}>
                     <Space>
                       <Text strong>{job.name}</Text>
+                      <Tag color={job.type === 'rayjob' ? 'purple' : 'orange'}>
+                        {job.type === 'rayjob' ? 'RayJob' : 'HyperPod'}
+                      </Tag>
                       <Tag color="blue">
                         {job.spec.replicas} replicas
                       </Tag>

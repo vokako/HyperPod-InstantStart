@@ -250,22 +250,28 @@ const TrainingMonitorPanel = () => {
     console.log(`Log stream stopped for pod: ${podName}`);
   };
 
-  // 获取训练任务列表 - 适配全局刷新管理器
+  // 获取训练任务列表 - 调用统一的后端 API
   const fetchTrainingJobs = async (showMessage = true) => {
     // 如果是从全局刷新管理器调用，不显示loading状态（避免冲突）
     const isGlobalRefresh = showMessage === undefined;
-    
+
+    console.log('🚀 [Frontend] fetchTrainingJobs called, showMessage:', showMessage, 'isGlobalRefresh:', isGlobalRefresh);
+
     if (!isGlobalRefresh) {
       setLoading(true);
     }
-    
+
     try {
+      console.log('📡 [Frontend] Calling /api/training-jobs...');
       const response = await fetch('/api/training-jobs');
+      console.log('📡 [Frontend] Response status:', response.status, response.statusText);
       const result = await response.json();
-      
+      console.log('📡 [Frontend] Response data:', result);
+
       if (result.success) {
+        console.log('✅ [Frontend] Setting training jobs:', result.jobs);
         setTrainingJobs(result.jobs);
-        
+
         // 检查当前选中的作业是否还存在于新的作业列表中
         if (selectedJob) {
           const jobExists = result.jobs.some(job => job.name === selectedJob);
@@ -315,13 +321,27 @@ const TrainingMonitorPanel = () => {
     }
   };
 
-  // 获取训练任务的pods
+  // 获取训练任务的pods - 根据作业类型调用不同API
   const fetchJobPods = async (jobName) => {
     setPodsLoading(true);
     try {
-      const response = await fetch(`/api/training-jobs/${jobName}/pods`);
+      // 找到对应的作业信息以确定类型
+      const job = trainingJobs.find(j => j.name === jobName);
+      if (!job) {
+        throw new Error(`Job ${jobName} not found`);
+      }
+
+      // 根据作业类型调用不同的API
+      let apiUrl;
+      if (job.type === 'rayjob') {
+        apiUrl = `/api/rayjobs/${jobName}/pods`;
+      } else {
+        apiUrl = `/api/hyperpod-jobs/${jobName}/pods`;
+      }
+
+      const response = await fetch(apiUrl);
       const result = await response.json();
-      
+
       if (result.success) {
         setJobPods(result.pods);
         // 清空之前的日志
@@ -485,9 +505,11 @@ const TrainingMonitorPanel = () => {
 
   // 初始加载和全局刷新管理器注册
   useEffect(() => {
+    console.log('🎯 [Frontend] TrainingMonitorPanel useEffect triggered, selectedJob:', selectedJob);
+
     // 注册到全局刷新管理器
     const componentId = 'training-monitor';
-    
+
     const refreshFunction = async () => {
       await fetchTrainingJobs();
       // 如果有选中的job，也刷新其pods信息
@@ -504,6 +526,7 @@ const TrainingMonitorPanel = () => {
     operationRefreshManager.subscribe(componentId, refreshFunction);
 
     // 初始加载
+    console.log('🔄 [Frontend] Starting initial fetchTrainingJobs...');
     fetchTrainingJobs();
 
     // 清理函数
@@ -652,10 +675,14 @@ const TrainingMonitorPanel = () => {
                 loading={loading}
                 allowClear
               >
+                {console.log('🎨 [Frontend] Rendering training jobs in Select:', trainingJobs) || null}
                 {trainingJobs.map(job => (
                   <Option key={job.name} value={job.name}>
                     <Space>
                       <Text strong>{job.name}</Text>
+                      <Tag color={job.type === 'rayjob' ? 'purple' : 'orange'}>
+                        {job.type === 'rayjob' ? 'RayJob' : 'HyperPod'}
+                      </Tag>
                       <Tag color="blue">
                         {job.spec.replicas} replicas
                       </Tag>
