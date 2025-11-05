@@ -157,8 +157,13 @@ class MultiClusterAPIs {
     }
   }
 
-  // 保存集群配置（支持多集群）
+  // DEPRECATED: handleSaveConfig - depends on cli/ directory
   async handleSaveConfig(req, res) {
+    return res.status(410).json({
+      success: false,
+      error: 'This API endpoint is deprecated.'
+    });
+    /* 
     try {
       const config = req.body;
       console.log('Saving cluster configuration:', config);
@@ -266,8 +271,13 @@ class MultiClusterAPIs {
     return content;
   }
 
-  // 从 CLI 目录自动初始化多集群结构
+  // DEPRECATED: autoInitializeFromCLI - depends on cli/ directory
   async autoInitializeFromCLI() {
+    return {
+      success: false,
+      error: 'This method is deprecated.'
+    };
+    /*
     try {
       // 1. 检查 CLI 目录的 init_envs 文件
       const cliInitEnvs = path.join(this.clusterManager.cliDir, 'init_envs');
@@ -341,6 +351,7 @@ class MultiClusterAPIs {
         error: `Failed to initialize multi-cluster structure: ${error.message}`
       };
     }
+    */
   }
 
   // 从 init_envs 内容提取配置信息
@@ -361,8 +372,13 @@ class MultiClusterAPIs {
     };
   }
 
-  // 执行集群启动 (Step 1) - 支持多集群
+  // DEPRECATED: handleLaunch - depends on cli/ directory
   async handleLaunch(req, res) {
+    return res.status(410).json({
+      success: false,
+      error: 'This API endpoint is deprecated.'
+    });
+    /*
     try {
       // 1. 自动初始化多集群结构（从 ../cli/init_envs 提取信息）
       const initResult = await this.autoInitializeFromCLI();
@@ -430,10 +446,16 @@ class MultiClusterAPIs {
         error: error.message
       });
     }
+    */
   }
 
-  // 执行集群配置 (Step 2) - 支持多集群
+  // DEPRECATED: handleConfigure - depends on cli/ directory
   async handleConfigure(req, res) {
+    return res.status(410).json({
+      success: false,
+      error: 'This API endpoint is deprecated.'
+    });
+    /*
     try {
       const activeCluster = this.clusterManager.getActiveCluster();
       
@@ -509,6 +531,7 @@ class MultiClusterAPIs {
         error: error.message
       });
     }
+    */
   }
 
   // 获取日志内容 - 支持多集群
