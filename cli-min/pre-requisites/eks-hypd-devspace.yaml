@@ -220,6 +220,7 @@ Resources:
             
             mkdir -p /home/ubuntu/workspace/s3
             chown -R ubuntu:ubuntu /home/ubuntu/workspace
+            chown ubuntu:ubuntu /home/ubuntu/.bashrc
             
             # Configure fuse for allow_other
             echo "user_allow_other" >> /etc/fuse.conf
@@ -231,12 +232,8 @@ Resources:
 
             sudo -u ubuntu s3fs $S3_BUCKET_NAME /home/ubuntu/workspace/s3 -o iam_role=${EKSPlusHYPDAdminRole},allow_other,uid=1000,gid=1000
 
-            # Only write CURRENT_BUCKET_INFO if it doesn't exist
-            if ! sudo -u ubuntu aws s3 ls s3://$S3_BUCKET_NAME/CURRENT_BUCKET_INFO 2>/dev/null; then
-              sudo -u ubuntu bash -c 'echo "{\"bucketName\":\"'$S3_BUCKET_NAME'\",\"awsRegion\":\"${AWS::Region}\",\"createTime\":\"$(date -Iseconds)\"}" > /home/ubuntu/workspace/s3/CURRENT_BUCKET_INFO'
-            fi
-            
-            chown -R ubuntu:ubuntu /home/ubuntu
+            # Write CURRENT_BUCKET_INFO
+            sudo -u ubuntu bash -c 'echo "{\"bucketName\":\"'$S3_BUCKET_NAME'\",\"awsRegion\":\"${AWS::Region}\",\"createTime\":\"$(date -Iseconds)\"}" > /home/ubuntu/workspace/s3/CURRENT_BUCKET_INFO'
             
             echo "Installation completed at $(date)"
             
