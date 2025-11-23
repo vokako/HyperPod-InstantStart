@@ -205,6 +205,13 @@ helm upgrade --install hyperpod-dependencies ./sagemaker-hyperpod-cli/helm_chart
   --set trainingOperators.enabled=true \\
   --set deep-health-check.enabled=false \\
   --set job-auto-restart.enabled=false \\
+  --set inferenceOperators.enabled=false \\
+  --set mlflow.enabled=false \\
+  --set storage.enabled=false \\
+  --set cluster-role-and-bindings.enabled=false \\
+  --set namespaced-role-and-bindings.enabled=false \\
+  --set team-role-and-bindings.enabled=false \\
+  --set gpu-operator.enabled=false \\
   --timeout=10m &&
 echo "=== HyperPod Helm Chart installation completed ==="'`;
     
