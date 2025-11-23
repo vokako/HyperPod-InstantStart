@@ -11,4 +11,14 @@ aws cloudformation create-stack \
               ParameterKey=KeyPairName,ParameterValue=pdxkeypair \
   --capabilities CAPABILITY_NAMED_IAM
 
-# ParameterKey=ExistingS3BucketName,ParameterValue=$EXISTING_S3_BUCKET \
+
+name_tag=hypd-test-s3-$(date +"%m%d%H%M")
+aws cloudformation create-stack \
+  --stack-name $name_tag \
+  --template-body file://eks-hypd-workspace-s3.yaml \
+  --parameters ParameterKey=ResourceTag,ParameterValue=$name_tag \
+              ParameterKey=InstanceType,ParameterValue=m5.2xlarge \
+              ParameterKey=EBSVolumeSize,ParameterValue=200 \
+              ParameterKey=KeyPairName,ParameterValue=pdxkeypair \
+              ParameterKey=ExistingS3BucketName,ParameterValue=eks-hypd-workspace-09190728-s3-us-west-2 \
+  --capabilities CAPABILITY_NAMED_IAM

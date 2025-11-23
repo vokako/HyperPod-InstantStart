@@ -6856,6 +6856,29 @@ app.post('/api/cluster/create-hyperpod', async (req, res) => {
     const azResult = execSync(azCommand, { encoding: 'utf8' });
     const availabilityZoneId = azResult.trim();
     
+    // 🔑 确保目标 AZ 有 Public Subnet（2025-11-23）
+    console.log(`\n🔍 Ensuring public subnet exists in ${userConfig.availabilityZone}...`);
+    const SubnetManager = require('./utils/subnetManager');
+    try {
+      const publicSubnetResult = await SubnetManager.ensurePublicSubnet({
+        vpcId: eksInfrastructureInfo.VPC_ID,
+        availabilityZone: userConfig.availabilityZone,
+        clusterTag: activeCluster,
+        region: region
+      });
+      
+      console.log(`✅ Public subnet ready: ${publicSubnetResult.subnetId} (${publicSubnetResult.subnetName})`);
+      if (publicSubnetResult.created) {
+        console.log(`   Created new subnet with CIDR: ${publicSubnetResult.cidrBlock}`);
+      }
+    } catch (subnetError) {
+      console.error('❌ Failed to ensure public subnet:', subnetError);
+      return res.status(500).json({ 
+        success: false, 
+        error: `Failed to ensure public subnet in ${userConfig.availabilityZone}: ${subnetError.message}` 
+      });
+    }
+    
     // 验证必需的基础设施信息
     if (!eksInfrastructureInfo.VPC_ID || !eksInfrastructureInfo.SECURITY_GROUP_ID) {
       return res.status(400).json({ 

@@ -1,0 +1,319 @@
+const { execSync } = require('child_process');
+const { promisify } = require('util');
+const exec = promisify(require('child_process').exec);
+
+class SubnetManager {
+  
+  /**
+   * 检查指定 AZ 是否存在 Public Subnet
+   * @param {string} vpcId - VPC ID
+   * @param {string} availabilityZone - 可用区名称 (如 us-west-2a)
+   * @param {string} region - AWS 区域
+   * @returns {Promise<Object>} { exists: boolean, subnetId: string|null, routeTableId: string|null }
+   */
+  static async checkPublicSubnetInAZ(vpcId, availabilityZone, region) {
+    try {
+      // 查询该 AZ 中的所有子网
+      const cmd = `aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=${vpcId}" "Name=availability-zone,Values=${availabilityZone}" \
+        --query "Subnets[*].[SubnetId,MapPublicIpOnLaunch,Tags[?Key=='Name'].Value|[0]]" \
+        --region ${region} \
+        --output json`;
+      
+      const result = await exec(cmd);
+      const subnets = JSON.parse(result.stdout);
+      
+      // 查找 Public Subnet (MapPublicIpOnLaunch = true)
+      const publicSubnet = subnets.find(s => s[1] === true);
+      
+      if (publicSubnet) {
+        const subnetId = publicSubnet[0];
+        
+        // 获取关联的路由表
+        const rtCmd = `aws ec2 describe-route-tables \
+          --filters "Name=association.subnet-id,Values=${subnetId}" \
+          --query "RouteTables[0].RouteTableId" \
+          --region ${region} \
+          --output text`;
+        
+        const rtResult = await exec(rtCmd);
+        const routeTableId = rtResult.stdout.trim();
+        
+        return {
+          exists: true,
+          subnetId: subnetId,
+          subnetName: publicSubnet[2] || null,
+          routeTableId: routeTableId !== 'None' ? routeTableId : null
+        };
+      }
+      
+      return { exists: false, subnetId: null, routeTableId: null };
+      
+    } catch (error) {
+      console.error(`Error checking public subnet in AZ ${availabilityZone}:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 获取下一个可用的 Public Subnet 编号
+   * 基于现有的命名模式: {clusterTag}-SMHP-Public{N}
+   * @param {string} vpcId - VPC ID
+   * @param {string} clusterTag - 集群标识
+   * @param {string} region - AWS 区域
+   * @returns {Promise<number>} 下一个可用的编号
+   */
+  static async getNextPublicSubnetNumber(vpcId, clusterTag, region) {
+    try {
+      // 查询所有 Public Subnet
+      const cmd = `aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=${vpcId}" "Name=map-public-ip-on-launch,Values=true" \
+        --query "Subnets[*].Tags[?Key=='Name'].Value|[0]" \
+        --region ${region} \
+        --output json`;
+      
+      const result = await exec(cmd);
+      const subnetNames = JSON.parse(result.stdout).flat().filter(Boolean);
+      
+      // 提取编号: hypd-1031-3706-SMHP-Public1 -> 1
+      const pattern = new RegExp(`${clusterTag}-SMHP-Public(\\d+)`);
+      const numbers = subnetNames
+        .map(name => {
+          const match = name.match(pattern);
+          return match ? parseInt(match[1]) : 0;
+        })
+        .filter(n => n > 0);
+      
+      // 返回最大编号 + 1
+      return numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+      
+    } catch (error) {
+      console.error('Error getting next public subnet number:', error);
+      return 1; // 默认从 1 开始
+    }
+  }
+  
+  /**
+   * 生成下一个可用的 Public Subnet CIDR
+   * 基于现有模式: /24 网段，递增第三个八位组
+   * 例如: 10.90.10.0/24, 10.90.11.0/24, 10.90.12.0/24 -> 10.90.13.0/24
+   * @param {string} vpcId - VPC ID
+   * @param {string} region - AWS 区域
+   * @returns {Promise<string>} 可用的 CIDR 块
+   */
+  static async generateNextPublicSubnetCIDR(vpcId, region) {
+    try {
+      // 1. 获取 VPC CIDR
+      const vpcCmd = `aws ec2 describe-vpcs \
+        --vpc-ids ${vpcId} \
+        --query "Vpcs[0].CidrBlock" \
+        --region ${region} \
+        --output text`;
+      
+      const vpcCidr = (await exec(vpcCmd)).stdout.trim();
+      const [vpcBase] = vpcCidr.split('/');
+      const [octet1, octet2] = vpcBase.split('.');
+      
+      // 2. 获取所有已使用的子网 CIDR
+      const subnetsCmd = `aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=${vpcId}" \
+        --query "Subnets[*].CidrBlock" \
+        --region ${region} \
+        --output json`;
+      
+      const usedCidrs = JSON.parse((await exec(subnetsCmd)).stdout);
+      
+      // 3. 查找可用的第三个八位组 (从 10 开始，符合现有模式)
+      for (let octet3 = 10; octet3 < 256; octet3++) {
+        const candidateCidr = `${octet1}.${octet2}.${octet3}.0/24`;
+        
+        // 检查是否与任何现有子网冲突
+        const hasConflict = usedCidrs.some(usedCidr => {
+          return this.cidrOverlaps(candidateCidr, usedCidr);
+        });
+        
+        if (!hasConflict) {
+          console.log(`✅ Generated available CIDR: ${candidateCidr}`);
+          return candidateCidr;
+        }
+      }
+      
+      throw new Error('No available CIDR blocks found in VPC range');
+      
+    } catch (error) {
+      console.error('Error generating public subnet CIDR:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 检查两个 CIDR 块是否重叠
+   * @param {string} cidr1 - CIDR 块 1
+   * @param {string} cidr2 - CIDR 块 2
+   * @returns {boolean} 是否重叠
+   */
+  static cidrOverlaps(cidr1, cidr2) {
+    // 简单实现：检查 CIDR 的基础地址是否相同
+    const [base1] = cidr1.split('/');
+    const [base2] = cidr2.split('/');
+    
+    // 对于 /24 网段，只需比较前三个八位组
+    const prefix1 = base1.split('.').slice(0, 3).join('.');
+    const prefix2 = base2.split('.').slice(0, 3).join('.');
+    
+    return prefix1 === prefix2;
+  }
+  
+  /**
+   * 获取 VPC 的 Public Route Table (有 IGW 路由的路由表)
+   * @param {string} vpcId - VPC ID
+   * @param {string} region - AWS 区域
+   * @returns {Promise<string|null>} Route Table ID
+   */
+  static async getPublicRouteTable(vpcId, region) {
+    try {
+      // 查找有 0.0.0.0/0 -> igw-* 路由的路由表
+      const cmd = `aws ec2 describe-route-tables \
+        --filters "Name=vpc-id,Values=${vpcId}" \
+        --query "RouteTables[?Routes[?DestinationCidrBlock=='0.0.0.0/0' && starts_with(GatewayId, 'igw-')]].RouteTableId" \
+        --region ${region} \
+        --output text`;
+      
+      const result = await exec(cmd);
+      const routeTableId = result.stdout.trim();
+      
+      return routeTableId !== '' ? routeTableId : null;
+      
+    } catch (error) {
+      console.error('Error getting public route table:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 创建 Public Subnet
+   * @param {Object} config - 配置对象
+   * @param {string} config.vpcId - VPC ID
+   * @param {string} config.cidrBlock - CIDR 块 (如 10.90.12.0/24)
+   * @param {string} config.availabilityZone - 可用区名称
+   * @param {string} config.subnetName - 子网名称
+   * @param {string} config.region - AWS 区域
+   * @returns {Promise<string>} 创建的 Subnet ID
+   */
+  static async createPublicSubnet(config) {
+    const { vpcId, cidrBlock, availabilityZone, subnetName, region } = config;
+    
+    try {
+      // 创建子网
+      const createCmd = `aws ec2 create-subnet \
+        --vpc-id ${vpcId} \
+        --cidr-block ${cidrBlock} \
+        --availability-zone ${availabilityZone} \
+        --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=${subnetName}},{Key=kubernetes.io/role/elb,Value=1}]' \
+        --region ${region} \
+        --output json`;
+      
+      const createResult = await exec(createCmd);
+      const subnet = JSON.parse(createResult.stdout);
+      const subnetId = subnet.Subnet.SubnetId;
+      
+      console.log(`✅ Created public subnet: ${subnetId} in ${availabilityZone}`);
+      
+      // 启用自动分配公网 IP
+      const modifyCmd = `aws ec2 modify-subnet-attribute \
+        --subnet-id ${subnetId} \
+        --map-public-ip-on-launch \
+        --region ${region}`;
+      
+      await exec(modifyCmd);
+      console.log(`✅ Enabled auto-assign public IP for subnet: ${subnetId}`);
+      
+      return subnetId;
+      
+    } catch (error) {
+      console.error('Error creating public subnet:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 关联子网到路由表
+   * @param {string} subnetId - Subnet ID
+   * @param {string} routeTableId - Route Table ID
+   * @param {string} region - AWS 区域
+   * @returns {Promise<void>}
+   */
+  static async associateRouteTable(subnetId, routeTableId, region) {
+    try {
+      const cmd = `aws ec2 associate-route-table \
+        --subnet-id ${subnetId} \
+        --route-table-id ${routeTableId} \
+        --region ${region}`;
+      
+      await exec(cmd);
+      console.log(`✅ Associated subnet ${subnetId} with route table ${routeTableId}`);
+      
+    } catch (error) {
+      console.error('Error associating route table:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 确保指定 AZ 有 Public Subnet（如果没有则创建）
+   * @param {Object} config - 配置对象
+   * @param {string} config.vpcId - VPC ID
+   * @param {string} config.availabilityZone - 可用区名称
+   * @param {string} config.cidrBlock - CIDR 块（如果需要创建）
+   * @param {string} config.clusterTag - 集群标识（用于命名）
+   * @param {string} config.region - AWS 区域
+   * @returns {Promise<Object>} { subnetId: string, created: boolean }
+   */
+  static async ensurePublicSubnet(config) {
+    const { vpcId, availabilityZone, cidrBlock, clusterTag, region } = config;
+    
+    // 1. 检查是否已存在
+    const checkResult = await this.checkPublicSubnetInAZ(vpcId, availabilityZone, region);
+    
+    if (checkResult.exists) {
+      console.log(`✅ Public subnet already exists in ${availabilityZone}: ${checkResult.subnetId}`);
+      return {
+        subnetId: checkResult.subnetId,
+        routeTableId: checkResult.routeTableId,
+        created: false
+      };
+    }
+    
+    console.log(`⚠️ No public subnet found in ${availabilityZone}, creating one...`);
+    
+    // 2. 获取 Public Route Table
+    const routeTableId = await this.getPublicRouteTable(vpcId, region);
+    
+    if (!routeTableId) {
+      throw new Error(`No public route table found in VPC ${vpcId}`);
+    }
+    
+    console.log(`✅ Found public route table: ${routeTableId}`);
+    
+    // 3. 创建 Public Subnet
+    const subnetName = `${clusterTag}-SMHP-Public-${availabilityZone}`;
+    const subnetId = await this.createPublicSubnet({
+      vpcId,
+      cidrBlock,
+      availabilityZone,
+      subnetName,
+      region
+    });
+    
+    // 4. 关联到 Public Route Table
+    await this.associateRouteTable(subnetId, routeTableId, region);
+    
+    return {
+      subnetId,
+      routeTableId,
+      created: true
+    };
+  }
+}
+
+module.exports = SubnetManager;
