@@ -1,0 +1,14 @@
+{
+  "ignore": [
+    "managed_clusters_info/**",
+    "logs/**",
+    "tmp/**",
+    "config/**",
+    "deployments/**",
+    "templates/**",
+    "mlflow/**",
+    "client/**",
+    "node_modules/**"
+  ],
+  "ext": "js,json"
+}
