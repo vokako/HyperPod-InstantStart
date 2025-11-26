@@ -313,6 +313,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
       --role-name=\$ROLE_NAME \\
       --attach-policy-arn=arn:aws:iam::\$ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \\
       --region=\$AWS_REGION \\
+      --override-existing-serviceaccounts \\
       --approve
     
     # 验证ServiceAccount创建成功
