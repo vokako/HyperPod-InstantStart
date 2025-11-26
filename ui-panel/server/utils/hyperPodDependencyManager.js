@@ -69,6 +69,9 @@ class HyperPodDependencyManager {
       // 等待HyperPod集群就绪
       await this.waitForHyperPodReady(configDir);
       
+      // 配置 HyperPod Pod Identity 权限
+      await this.configureHyperPodPodIdentity(configDir);
+      
       // 安装HyperPod专用依赖
       await this.installHyperPodDependencies(configDir);
       
@@ -153,6 +156,12 @@ class HyperPodDependencyManager {
     
     # 3. 确保Pod Identity Association存在（不删除，只确保创建）
     echo "Ensuring Pod Identity Association exists..."
+    EXECUTION_ROLE=\${EXECUTION_ROLE:-\$SAGEMAKER_ROLE_ARN}
+    if [ -z "\$EXECUTION_ROLE" ]; then
+        echo "ERROR: No EXECUTION_ROLE or SAGEMAKER_ROLE_ARN found"
+        exit 1
+    fi
+    echo "Using execution role: \$EXECUTION_ROLE"
     aws eks create-pod-identity-association \\
         --cluster-name \$EKS_CLUSTER_NAME \\
         --role-arn \$EXECUTION_ROLE \\
@@ -195,7 +204,34 @@ class HyperPodDependencyManager {
     #     fi
     # done
 
-    # 6. 重新创建HyperPod Training Operator addon
+    # 6. 等待 AWS Load Balancer Controller webhook 就绪
+    echo "Waiting for AWS Load Balancer Controller webhook to be ready..."
+    
+    # 等待 LBC deployment 就绪
+    kubectl wait --for=condition=available deployment/aws-load-balancer-controller -n kube-system --timeout=300s || echo "WARNING: LBC deployment wait timeout"
+    
+    # 等待 webhook service endpoints 就绪
+    for i in {1..30}; do
+        ENDPOINTS=\$(kubectl get endpoints aws-load-balancer-webhook-service -n kube-system -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)
+        if [ -n "\$ENDPOINTS" ]; then
+            echo "Webhook service endpoints ready: \$ENDPOINTS"
+            break
+        fi
+        echo "Waiting for webhook endpoints... attempt \$i/30"
+        sleep 5
+    done
+    
+    # 验证 webhook 配置已注册
+    WEBHOOK_NAME=\$(kubectl get mutatingwebhookconfiguration aws-load-balancer-webhook -o jsonpath=\"{.webhooks[?(@.name==\\\"mservice.elbv2.k8s.aws\\\")].name}\" 2>/dev/null)
+    if [ "\$WEBHOOK_NAME" = "mservice.elbv2.k8s.aws" ]; then
+        echo "Webhook configuration registered: \$WEBHOOK_NAME"
+    else
+        echo "WARNING: Webhook configuration not found"
+    fi
+    
+    echo "Webhook readiness check completed"
+    
+    # 7. 重新创建HyperPod Training Operator addon
     echo "Creating HyperPod Training Operator addon..."
     aws eks create-addon \\
         --cluster-name \$EKS_CLUSTER_NAME \\
@@ -295,8 +331,9 @@ class HyperPodDependencyManager {
     const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
 
     # 检查是否有 HyperPod 执行角色
+    EXECUTION_ROLE=\${EXECUTION_ROLE:-\$SAGEMAKER_ROLE_ARN}
     if [ -z "\$EXECUTION_ROLE" ]; then
-        echo "No EXECUTION_ROLE found, skipping HyperPod Pod Identity configuration"
+        echo "No EXECUTION_ROLE or SAGEMAKER_ROLE_ARN found, skipping HyperPod Pod Identity configuration"
         exit 0
     fi
 
