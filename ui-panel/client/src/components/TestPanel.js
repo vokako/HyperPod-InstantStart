@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Form, 
   Input,
+  InputNumber,
   Button, 
   Select, 
   Card, 
@@ -10,7 +11,8 @@ import {
   Divider,
   Alert,
   message,
-  Spin
+  Spin,
+  Radio
 } from 'antd';
 import { 
   SendOutlined, 
@@ -19,7 +21,8 @@ import {
   ThunderboltOutlined,
   CodeOutlined,
   LinkOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  CloudOutlined
 } from '@ant-design/icons';
 import { CONFIG } from '../config/constants';
 
@@ -36,16 +39,25 @@ const TestPanel = ({ services, onRefresh }) => {
   const [selectedService, setSelectedService] = useState(null);
   const [modelType, setModelType] = useState('ollama'); // 'ollama' or 'vllm'
   const [fetchingModelId, setFetchingModelId] = useState(false); // 正在获取模型ID
+  
+  // 新增：访问模式状态
+  const [accessMode, setAccessMode] = useState('loadbalancer'); // 'loadbalancer' or 'portforward'
 
-  // 过滤出模型相关的服务
-  const modelServices = services.filter(service => 
-    service.metadata.name.includes('vllm') || 
-    service.metadata.name.includes('olm') ||
-    service.metadata.name.includes('model') ||
-    service.metadata.name.includes('gpt') ||
-    service.metadata.name.includes('nlb') ||
-    service.spec.type === 'LoadBalancer'
-  );
+  // 根据访问模式过滤服务
+  const modelServices = services.filter(service => {
+    // 排除系统服务
+    if (service.metadata?.name === 'kubernetes') {
+      return false;
+    }
+    
+    if (accessMode === 'loadbalancer') {
+      // LoadBalancer 模式：只显示 LoadBalancer 类型的服务
+      return service.spec?.type === 'LoadBalancer';
+    } else {
+      // Port-Forward 模式：只显示 ClusterIP 类型的服务
+      return service.spec?.type === 'ClusterIP';
+    }
+  });
 
   // 通过API直接获取真实的模型ID
   const fetchRealModelIdFromAPI = async (service) => {
@@ -212,13 +224,13 @@ const TestPanel = ({ services, onRefresh }) => {
       );
 
       if (!serviceStillExists) {
-        console.log(`Selected service ${selectedService.metadata.name} no longer exists, clearing selection`);
+        console.log(`Selected service ${selectedService.metadata.name} no longer in filtered list, clearing selection`);
         setSelectedService(null);
         setModelType('ollama');
         form.resetFields();
         setCurlCommand('');
         setResponse('');
-        message.info(`Service "${selectedService.metadata.name}" was deleted. Please select another service.`);
+        // 不显示 message，因为可能只是切换了访问模式
         return;
       }
     }
@@ -250,14 +262,19 @@ const TestPanel = ({ services, onRefresh }) => {
     setFetchingModelId(true);
     try {
       console.log('updateFormDefaults called with:', { type, serviceName: service?.metadata?.name });
-      const realModelId = await getRealModelId(service);
-      console.log('Got real model ID:', realModelId);
+      
+      // 注释掉自动获取模型 ID 的逻辑
+      // const realModelId = await getRealModelId(service);
+      // console.log('Got real model ID:', realModelId);
+      
+      // 使用空字符串作为 model 值
+      const realModelId = "";
       
       // 统一使用相同的payload格式，只调整model参数
       form.setFieldsValue({
         apiPath: '/v1/chat/completions',
         payload: JSON.stringify({
-          model: realModelId, // 使用真实的模型ID
+          model: realModelId, // 使用空字符串
           system: "You are an AI assistant.",
           messages: [
             {
@@ -281,6 +298,12 @@ const TestPanel = ({ services, onRefresh }) => {
   const getServiceUrl = (service) => {
     if (!service) return '';
     
+    // Port-Forward 模式：只返回 localhost（不包含端口）
+    if (accessMode === 'portforward') {
+      return 'http://localhost';
+    }
+    
+    // LoadBalancer 模式：原有逻辑
     // 尝试获取LoadBalancer的外部IP
     const ingress = service.status?.loadBalancer?.ingress?.[0];
     if (ingress) {
@@ -316,7 +339,7 @@ const TestPanel = ({ services, onRefresh }) => {
     setLoading(true);
     try {
       const serviceUrl = getServiceUrl(selectedService);
-      const { apiPath, payload } = values;
+      const { apiPath, payload, localPort } = values;
       
       // 验证JSON payload
       let parsedPayload;
@@ -328,11 +351,28 @@ const TestPanel = ({ services, onRefresh }) => {
         return;
       }
 
-      const fullUrl = `${serviceUrl}${apiPath}`;
+      let fullUrl, curlCmd;
       
-      const curlCmd = `curl -X POST "${fullUrl}" \\
+      if (accessMode === 'portforward') {
+        // Port-Forward 模式：拼接完整 URL（包含端口）
+        fullUrl = `http://localhost:${localPort || 8080}${apiPath}`;
+        const servicePort = selectedService.spec.ports?.[0]?.port || 8000;
+        const namespace = selectedService.metadata.namespace || 'default';
+        
+        curlCmd = `# Start port-forward first:
+kubectl port-forward -n ${namespace} service/${selectedService.metadata.name} ${localPort || 8080}:${servicePort}
+
+# Then run this curl command:
+curl -X POST "${fullUrl}" \\
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify(parsedPayload, null, 2)}'`;
+      } else {
+        // LoadBalancer 模式：原有逻辑
+        fullUrl = `${serviceUrl}${apiPath}`;
+        curlCmd = `curl -X POST "${fullUrl}" \\
+  -H "Content-Type: application/json" \\
+  -d '${JSON.stringify(parsedPayload, null, 2)}'`;
+      }
       
       setCurlCommand(curlCmd);
       
@@ -354,8 +394,7 @@ const TestPanel = ({ services, onRefresh }) => {
     setResponse('');
     
     try {
-      const serviceUrl = getServiceUrl(selectedService);
-      const { apiPath, payload } = values;
+      const { apiPath, payload, localPort } = values;
       
       // 验证JSON payload
       let parsedPayload;
@@ -367,28 +406,64 @@ const TestPanel = ({ services, onRefresh }) => {
         return;
       }
 
-      const fullUrl = `${serviceUrl}${apiPath}`;
+      let fullUrl;
       
-      // 通过后端代理请求
-      const response = await fetch('/api/proxy-request', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      if (accessMode === 'portforward') {
+        // Port-Forward 模式：使用新的 API
+        fullUrl = `http://localhost:${localPort || 8080}${apiPath}`;
+        const servicePort = selectedService.spec.ports?.[0]?.port || 8000;
+        const namespace = selectedService.metadata.namespace || 'default';
+        
+        const requestBody = {
           url: fullUrl,
-          payload: parsedPayload
-        }),
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setResponse(JSON.stringify(result.data, null, 2));
-        message.success('Request successful');
+          payload: parsedPayload,
+          portForward: {
+            enabled: true,
+            serviceName: selectedService.metadata.name,
+            namespace: namespace,
+            servicePort: servicePort,
+            localPort: localPort || 8080
+          }
+        };
+        
+        const response = await fetch('/api/proxy-request-portforward', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          setResponse(JSON.stringify(result.data, null, 2));
+          message.success('Request successful');
+        } else {
+          setResponse(`Error: ${result.error}\n\nDetails:\n${JSON.stringify(result.data || {}, null, 2)}`);
+          message.warning('Request returned an error (see response for details)');
+        }
       } else {
-        setResponse(`Error (${result.status}): ${result.error}\n\nDetails:\n${JSON.stringify(result.data, null, 2)}`);
-        message.warning('Request returned an error (see response for details)');
+        // LoadBalancer 模式：原有逻辑
+        const serviceUrl = getServiceUrl(selectedService);
+        fullUrl = `${serviceUrl}${apiPath}`;
+        
+        const response = await fetch('/api/proxy-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: fullUrl,
+            payload: parsedPayload
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          setResponse(JSON.stringify(result.data, null, 2));
+          message.success('Request successful');
+        } else {
+          setResponse(`Error (${result.status}): ${result.error}\n\nDetails:\n${JSON.stringify(result.data, null, 2)}`);
+          message.warning('Request returned an error (see response for details)');
+        }
       }
       
     } catch (error) {
@@ -432,6 +507,41 @@ const TestPanel = ({ services, onRefresh }) => {
 
   return (
     <div>
+      <style>{`
+        .ant-form-item-tooltip {
+          cursor: default !important;
+        }
+      `}</style>
+
+      {/* 访问模式选择 */}
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Text strong>Access Mode</Text>
+          <Radio.Group 
+            value={accessMode} 
+            onChange={(e) => setAccessMode(e.target.value)}
+            buttonStyle="solid"
+            style={{ width: '100%' }}
+          >
+            <Radio.Button value="loadbalancer" style={{ width: '50%', textAlign: 'center' }}>
+              <CloudOutlined /> External LoadBalancer
+            </Radio.Button>
+            <Radio.Button value="portforward" style={{ width: '50%', textAlign: 'center' }}>
+              <ApiOutlined /> Port-Forward
+            </Radio.Button>
+          </Radio.Group>
+          
+          {accessMode === 'portforward' && (
+            <Alert
+              message="Port-Forward Mode: Requests will automatically start/stop kubectl port-forward via ClusterIP."
+              type="info"
+              showIcon
+              style={{ marginTop: 8 }}
+            />
+          )}
+        </Space>
+      </Card>
+
       {/* 服务选择 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: '100%' }}>
@@ -522,7 +632,25 @@ const TestPanel = ({ services, onRefresh }) => {
           form={form}
           layout="vertical"
           onFinish={generateCurlCommand}
+          initialValues={{ localPort: 8080 }}
         >
+        {/* Local Port - 仅 Port-Forward 模式显示 */}
+        {accessMode === 'portforward' && (
+          <Form.Item
+            label="Local Port"
+            name="localPort"
+            rules={[{ required: true, message: 'Please input local port!' }]}
+            tooltip="Port on your local machine for port-forward"
+          >
+            <InputNumber 
+              min={1024}
+              max={65535}
+              style={{ width: '100%' }}
+              placeholder="8080"
+            />
+          </Form.Item>
+        )}
+
         <Form.Item
           label={
             <Space>

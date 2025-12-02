@@ -551,7 +551,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
       // 安装 EKS Pod Identity Agent（所有集群都需要）
       await this.installEKSPodIdentity(configDir);
 
-      await this.installnlbDependencies(configDir);
+      // await this.installnlbDependencies(configDir);
       
       await this.installGeneralDependencies(configDir);
       

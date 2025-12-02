@@ -683,6 +683,71 @@ app.post('/api/proxy-request', async (req, res) => {
   }
 });
 
+// 新增：代理HTTP请求到模型服务（Port-Forward模式）
+app.post('/api/proxy-request-portforward', async (req, res) => {
+  const portForwardManager = require('./port-forward-manager');
+  let requestId = null;
+  
+  try {
+    const { url, payload, method = 'POST', portForward } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing url'
+      });
+    }
+    
+    if (!portForward || !portForward.enabled) {
+      return res.status(400).json({
+        success: false,
+        error: 'Port-forward configuration required'
+      });
+    }
+    
+    const { serviceName, namespace, servicePort, localPort } = portForward;
+    
+    console.log(`[Port-Forward Mode] Starting for ${serviceName}...`);
+    
+    // 启动 port-forward
+    const pfResult = await portForwardManager.startTemporary(
+      serviceName,
+      namespace,
+      servicePort,
+      localPort
+    );
+    
+    requestId = pfResult.requestId;
+    console.log(`[Port-Forward] Started: ${requestId}`);
+    
+    // 等待 port-forward 完全就绪
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    console.log(`Proxying ${method} request to: ${url}`);
+    if (method.toUpperCase() !== 'GET') {
+      console.log(`Payload:`, JSON.stringify(payload, null, 2));
+    }
+    
+    const result = await makeHttpRequest(url, payload, method);
+    
+    console.log('Proxy result:', JSON.stringify(result, null, 2));
+    res.json(result);
+    
+  } catch (error) {
+    console.error('Proxy request error:', error);
+    res.json({
+      success: false,
+      error: error.error || error.message || 'Request failed'
+    });
+  } finally {
+    // 请求完成后立即关闭 port-forward
+    if (requestId) {
+      portForwardManager.stop(requestId);
+      console.log(`[Port-Forward] Stopped: ${requestId}`);
+    }
+  }
+});
+
 // 生成并部署YAML配置 - 仅用于推理部署（Container部署）
 app.post('/api/deploy', async (req, res) => {
   try {
