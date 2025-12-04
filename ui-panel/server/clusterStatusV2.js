@@ -49,7 +49,7 @@ class ClusterStatusV2 {
   /**
    * 获取单个节点的GPU信息（优化版本）
    */
-  async getNodeGPUInfo(node) {
+  async getNodeGPUInfo(node, hyperPodCapacityTypeMap = {}) {
     const nodeName = node.metadata.name;
     const nodeReady = node.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True';
     
@@ -60,6 +60,15 @@ class ClusterStatusV2 {
     
     // 获取节点标签信息用于分类
     const labels = node.metadata?.labels || {};
+    
+    // 获取 HyperPod 节点的 capacity type
+    let capacityType = null;
+    if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod') {
+      const instanceGroupName = labels['sagemaker.amazonaws.com/instance-group-name'];
+      if (instanceGroupName && hyperPodCapacityTypeMap[instanceGroupName]) {
+        capacityType = hyperPodCapacityTypeMap[instanceGroupName];
+      }
+    }
     
     try {
       // 并行获取节点信息，使用更高效的查询
@@ -138,6 +147,7 @@ class ClusterStatusV2 {
         nodeName,
         instanceType,
         labels, // 添加标签信息
+        capacityType, // HyperPod 节点的 capacity type
         totalGPU,
         usedGPU,
         availableGPU: Math.max(0, allocatableGPU - usedGPU),
@@ -152,6 +162,7 @@ class ClusterStatusV2 {
         nodeName,
         instanceType: 'Unknown',
         labels, // 添加标签信息
+        capacityType: null,
         totalGPU: 0,
         usedGPU: 0,
         availableGPU: 0,
@@ -167,11 +178,11 @@ class ClusterStatusV2 {
   /**
    * 并行获取所有节点的GPU信息
    */
-  async getAllNodesGPUInfo(nodes) {
+  async getAllNodesGPUInfo(nodes, hyperPodCapacityTypeMap = {}) {
     console.log(`Fetching GPU info for ${nodes.length} nodes in parallel...`);
     
     // 创建所有节点的查询Promise
-    const nodePromises = nodes.map(node => this.getNodeGPUInfo(node));
+    const nodePromises = nodes.map(node => this.getNodeGPUInfo(node, hyperPodCapacityTypeMap));
     
     // 使用Promise.allSettled确保即使部分节点失败也能返回结果
     const results = await Promise.allSettled(nodePromises);
@@ -184,6 +195,7 @@ class ClusterStatusV2 {
         return {
           nodeName: nodes[index]?.metadata?.name || 'unknown',
           instanceType: 'Unknown',
+          capacityType: null,
           totalGPU: 0,
           usedGPU: 0,
           availableGPU: 0,
@@ -236,6 +248,58 @@ class ClusterStatusV2 {
   }
 
   /**
+   * 获取 HyperPod 实例组的 Capacity Type 映射
+   */
+  async getHyperPodCapacityTypeMap() {
+    try {
+      const ClusterManager = require('./cluster-manager');
+      const AWSHelpers = require('./utils/awsHelpers');
+      const fs = require('fs');
+      const path = require('path');
+      
+      const clusterManager = new ClusterManager();
+      const activeClusterName = clusterManager.getActiveCluster();
+      
+      if (!activeClusterName) {
+        return {};
+      }
+
+      // 从 metadata 获取 HyperPod 集群信息
+      const metadataDir = clusterManager.getClusterMetadataDir(activeClusterName);
+      const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
+      
+      if (!fs.existsSync(clusterInfoPath)) {
+        return {};
+      }
+
+      const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+      
+      if (!clusterInfo.hyperPodCluster) {
+        return {};
+      }
+
+      const hpClusterName = clusterInfo.hyperPodCluster.ClusterName;
+      const region = await AWSHelpers.getCurrentRegion();
+      
+      // 获取最新的 HyperPod 集群状态
+      const hpData = await AWSHelpers.describeHyperPodCluster(hpClusterName, region);
+      
+      // 构建 instance group name -> capacity type 的映射
+      const capacityTypeMap = {};
+      for (const ig of hpData.InstanceGroups || []) {
+        const capacityType = ig.CapacityRequirements?.Spot ? 'spot' : 'on-demand';
+        capacityTypeMap[ig.InstanceGroupName] = capacityType;
+      }
+      
+      console.log('HyperPod capacity type map:', capacityTypeMap);
+      return capacityTypeMap;
+    } catch (error) {
+      console.warn('Failed to get HyperPod capacity type map:', error.message);
+      return {};
+    }
+  }
+
+  /**
    * 主要的集群状态获取方法
    */
   async getClusterStatus(forceRefresh = false) {
@@ -258,8 +322,11 @@ class ClusterStatusV2 {
         throw new Error('No nodes found in cluster');
       }
 
+      // 获取 HyperPod capacity type 映射
+      const hyperPodCapacityTypeMap = await this.getHyperPodCapacityTypeMap();
+
       // 并行获取所有节点的GPU信息
-      const gpuUsage = await this.getAllNodesGPUInfo(nodesData.items);
+      const gpuUsage = await this.getAllNodesGPUInfo(nodesData.items, hyperPodCapacityTypeMap);
       
       const fetchTime = Date.now() - startTime;
       const result = {

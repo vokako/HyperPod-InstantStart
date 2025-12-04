@@ -208,8 +208,16 @@ const ClusterStatusV2Redux = () => {
 
         // HyperPod节点
         if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod') {
+          const capacityType = record.capacityType; // 从后端获取的 capacity type
           return (
-            <Tag color="#722ed1">HyperPod</Tag>
+            <div>
+              <Tag color="#722ed1">HyperPod</Tag>
+              {capacityType && (
+                <div style={{ fontSize: '11px', color: '#666', marginTop: 2 }}>
+                  {capacityType === 'spot' ? 'Spot' : 'On-Demand'}
+                </div>
+              )}
+            </div>
           );
         }
 
