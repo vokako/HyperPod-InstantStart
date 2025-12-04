@@ -1610,6 +1610,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         />
       </Card>
 
+      {/* EC2 Karpenter Resources - 通过环境变量控制显示 */}
+      {process.env.REACT_APP_SHOW_EC2_KARPENTER !== 'false' && (
       <Card
         title="EC2 Karpenter Resources"
         size="small"
@@ -1828,6 +1830,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           </div>
         )}
       </Card>
+      )}
 
       <Modal
         title={`Scale ${scaleTarget?.type === 'eks' ? 'EKS Node Group' : 'HyperPod Instance Group'}: ${scaleTarget?.name}`}
