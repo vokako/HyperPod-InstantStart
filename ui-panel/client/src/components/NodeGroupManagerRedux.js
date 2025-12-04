@@ -74,6 +74,19 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
   const [createKarpenterResourceLoading, setCreateKarpenterResourceLoading] = useState(false);
   const [karpenterResourceForm] = Form.useForm();
 
+  // HyperPod Karpenter 相关状态
+  const [hyperpodKarpenterResources, setHyperpodKarpenterResources] = useState({
+    nodeClasses: [],
+    nodePools: [],
+    managedInstanceGroups: []
+  });
+  const [hyperpodKarpenterLoading, setHyperpodKarpenterLoading] = useState(true);
+  const [hyperpodKarpenterStatus, setHyperpodKarpenterStatus] = useState({ installed: false });
+  const [hyperpodKarpenterInstalling, setHyperpodKarpenterInstalling] = useState(false);
+  const [hyperpodKarpenterResourceModalVisible, setHyperpodKarpenterResourceModalVisible] = useState(false);
+  const [hyperpodKarpenterResourceCreating, setHyperpodKarpenterResourceCreating] = useState(false);
+  const [selectedInstanceGroups, setSelectedInstanceGroups] = useState([]);
+
   // 动态实例类型相关状态
   const [instanceTypesLoading, setInstanceTypesLoading] = useState(false);
   const [availableInstanceTypes, setAvailableInstanceTypes] = useState([]);
@@ -597,6 +610,117 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     }
   }, []);
 
+  // 获取 HyperPod Karpenter 资源
+  const fetchHyperPodKarpenterResources = useCallback(async () => {
+    setHyperpodKarpenterLoading(true);
+    try {
+      const response = await fetch('/api/cluster/hyperpod-karpenter/resources');
+      const data = await response.json();
+      if (response.ok) {
+        setHyperpodKarpenterResources(data.data);
+      } else {
+        console.error('Failed to fetch HyperPod Karpenter resources:', data.error);
+        setHyperpodKarpenterResources({
+          nodeClasses: [],
+          nodePools: []
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching HyperPod Karpenter resources:', error);
+      setHyperpodKarpenterResources({
+        nodeClasses: [],
+        nodePools: []
+      });
+    } finally {
+      setHyperpodKarpenterLoading(false);
+    }
+  }, []);
+
+  // 获取 HyperPod Karpenter 安装状态
+  const fetchHyperPodKarpenterStatus = useCallback(async () => {
+    try {
+      const response = await fetch('/api/cluster/hyperpod-karpenter/status');
+      const data = await response.json();
+      if (response.ok) {
+        setHyperpodKarpenterStatus(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching HyperPod Karpenter status:', error);
+      setHyperpodKarpenterStatus({ installed: false });
+    }
+  }, []);
+
+  // 安装 HyperPod Karpenter
+  const handleInstallHyperPodKarpenter = async () => {
+    if (hyperPodGroups.length === 0) {
+      message.error('No HyperPod cluster found');
+      return;
+    }
+
+    const hyperPodClusterName = hyperPodGroups[0].clusterName;
+    
+    setHyperpodKarpenterInstalling(true);
+    try {
+      const response = await fetch('/api/cluster/hyperpod-karpenter/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clusterTag: activeCluster,
+          hyperPodClusterName: hyperPodClusterName
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        message.success('HyperPod Karpenter installed successfully');
+        await fetchHyperPodKarpenterStatus();
+      } else {
+        message.error(`Installation failed: ${result.error}`);
+      }
+    } catch (error) {
+      message.error('Failed to install HyperPod Karpenter');
+      console.error('Installation error:', error);
+    } finally {
+      setHyperpodKarpenterInstalling(false);
+    }
+  };
+
+  // 创建 HyperPod Karpenter 资源
+  const handleCreateHyperPodKarpenterResource = async () => {
+    if (selectedInstanceGroups.length === 0) {
+      message.error('Please select at least one instance group');
+      return;
+    }
+
+    setHyperpodKarpenterResourceCreating(true);
+    try {
+      const response = await fetch('/api/cluster/hyperpod-karpenter/create-resource', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instanceGroups: selectedInstanceGroups
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        message.success('HyperPod Karpenter resource created successfully');
+        setHyperpodKarpenterResourceModalVisible(false);
+        setSelectedInstanceGroups([]);
+        await fetchHyperPodKarpenterResources();
+      } else {
+        message.error(`Creation failed: ${result.error}`);
+      }
+    } catch (error) {
+      message.error('Failed to create HyperPod Karpenter resource');
+      console.error('Creation error:', error);
+    } finally {
+      setHyperpodKarpenterResourceCreating(false);
+    }
+  };
+
   // 创建 Karpenter 资源 (NodeClass + NodePool)
   const handleCreateKarpenterResource = async (values) => {
     setCreateKarpenterResourceLoading(true);
@@ -964,6 +1088,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         dispatch(checkHyperPodCreationStatus()), // 必需：恢复创建状态显示
         fetchKarpenterStatus(), // 加载Karpenter状态
         fetchKarpenterResources(), // 加载NodeClass/NodePool资源
+        fetchHyperPodKarpenterStatus(), // 加载HyperPod Karpenter状态
+        fetchHyperPodKarpenterResources(), // 加载HyperPod Karpenter资源
         fetchAvailableInstanceTypes(), // 加载实例类型
         fetchHyperPodSubnets(), // 加载HyperPod子网
         fetchSubnets() // 加载所有子网（用于 Add Instance Group）
@@ -971,7 +1097,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     } catch (error) {
       console.error('Error in complete refresh:', error);
     }
-  }, [dispatch, fetchKarpenterStatus, fetchKarpenterResources, fetchAvailableInstanceTypes, fetchHyperPodSubnets, fetchSubnets]);
+  }, [dispatch, fetchKarpenterStatus, fetchKarpenterResources, fetchHyperPodKarpenterStatus, fetchHyperPodKarpenterResources, fetchAvailableInstanceTypes, fetchHyperPodSubnets, fetchSubnets]);
 
   // 注册到全局刷新管理器
   useEffect(() => {
@@ -1144,13 +1270,20 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       title: 'Capacity Type', 
       dataIndex: 'capacityType', 
       key: 'capacityType',
-      render: (capacityType) => {
-        if (!capacityType) return <Tag color="green">OD</Tag>;
-        const type = capacityType.toLowerCase();
+      render: (capacityType, record) => {
+        const type = capacityType ? capacityType.toLowerCase() : 'on-demand';
+        const isManaged = hyperpodKarpenterResources.managedInstanceGroups && 
+                         hyperpodKarpenterResources.managedInstanceGroups.includes(record.name);
+        
         return (
-          <Tag color={type === 'spot' ? 'orange' : 'green'}>
-            {type === 'spot' ? 'Spot' : 'OD'}
-          </Tag>
+          <Space>
+            <Tag color={type === 'spot' ? 'orange' : 'green'}>
+              {type === 'spot' ? 'Spot' : 'OD'}
+            </Tag>
+            {isManaged && (
+              <Tag color="blue">Karpenter</Tag>
+            )}
+          </Space>
         );
       }
     },
@@ -1294,6 +1427,140 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           pagination={false}
           locale={{ emptyText: 'No HyperPod and Instance groups' }}
           style={{ minHeight: hyperPodGroups.length === 0 ? '60px' : 'auto' }}
+        />
+      </Card>
+
+      {/* HyperPod Karpenter Resources */}
+      <Card
+        title="HyperPod Karpenter Resources"
+        size="small"
+        style={{ marginTop: 16, marginBottom: 16 }}
+        extra={
+          <Space>
+            {hyperpodKarpenterStatus.installed && (
+              <Button
+                type="default"
+                size="small"
+                icon={<PlusOutlined />}
+                disabled={hyperPodGroups.length === 0}
+                onClick={() => setHyperpodKarpenterResourceModalVisible(true)}
+                title="Add HyperPod Karpenter Resource"
+              >
+                Add Resource
+              </Button>
+            )}
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlusOutlined />}
+              loading={hyperpodKarpenterInstalling}
+              disabled={hyperPodGroups.length === 0 || hyperpodKarpenterInstalling || hyperpodKarpenterStatus.installed}
+              onClick={handleInstallHyperPodKarpenter}
+              title={
+                hyperpodKarpenterStatus.installed
+                  ? "HyperPod Karpenter already installed"
+                  : hyperPodGroups.length === 0
+                    ? "HyperPod cluster must exist"
+                    : "Install HyperPod Karpenter"
+              }
+            >
+              Install HyperPod Karpenter
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          dataSource={hyperpodKarpenterResources.nodePools}
+          columns={[
+            {
+              title: 'NodePool',
+              dataIndex: 'name',
+              key: 'name',
+              render: (text) => <Text strong>{text}</Text>
+            },
+            {
+              title: 'HyperpodNodeClass',
+              dataIndex: 'nodeClassRef',
+              key: 'nodeClassRef',
+              render: (text) => <Text>{text}</Text>
+            },
+            {
+              title: 'Status',
+              dataIndex: 'status',
+              key: 'status',
+              render: (status) => (
+                <Tag color={status === 'Ready' ? 'success' : 'default'}>
+                  {status}
+                </Tag>
+              )
+            },
+            {
+              title: 'Instance Group',
+              dataIndex: 'nodeClassRef',
+              key: 'instanceGroup',
+              render: (nodeClassRef) => {
+                const nodeClass = hyperpodKarpenterResources.nodeClasses.find(nc => nc.name === nodeClassRef);
+                return nodeClass && nodeClass.instanceGroups.length > 0 ? (
+                  <Text>{nodeClass.instanceGroups.join(', ')}</Text>
+                ) : '-';
+              }
+            },
+            {
+              title: 'Instance Types',
+              dataIndex: 'nodeClassRef',
+              key: 'instanceTypes',
+              render: (nodeClassRef) => {
+                const nodeClass = hyperpodKarpenterResources.nodeClasses.find(nc => nc.name === nodeClassRef);
+                if (!nodeClass || nodeClass.instanceTypes.length === 0) return '-';
+                return <Text>{nodeClass.instanceTypes.join(', ')}</Text>;
+              }
+            },
+            {
+              title: 'Capacity Type',
+              dataIndex: 'nodeClassRef',
+              key: 'capacityType',
+              render: (nodeClassRef) => {
+                const nodeClass = hyperpodKarpenterResources.nodeClasses.find(nc => nc.name === nodeClassRef);
+                if (!nodeClass) return '-';
+                const capacityType = nodeClass.capacityType;
+                return (
+                  <Tag color={capacityType === 'on-demand' ? 'green' : 'orange'}>
+                    {capacityType === 'on-demand' ? 'OD' : 'Spot'}
+                  </Tag>
+                );
+              }
+            },
+            {
+              title: 'Actions',
+              key: 'actions',
+              width: 80,
+              render: (_, record) => (
+                <Button
+                  size="small"
+                  danger
+                  onClick={async () => {
+                    try {
+                      await fetch(`/api/cluster/hyperpod-karpenter/nodepool/${record.name}`, {
+                        method: 'DELETE'
+                      });
+                      message.success(`NodePool ${record.name} deleted`);
+                      fetchHyperPodKarpenterResources();
+                    } catch (error) {
+                      message.error('Failed to delete NodePool');
+                    }
+                  }}
+                >
+                  Delete
+                </Button>
+              )
+            }
+          ]}
+          rowKey="name"
+          size="small"
+          pagination={false}
+          loading={hyperpodKarpenterLoading}
+          locale={{ emptyText: 'No HyperPod Karpenter Resources' }}
+          style={{ minHeight: hyperpodKarpenterResources.nodePools.length === 0 ? '60px' : 'auto' }}
         />
       </Card>
 
@@ -1778,7 +2045,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
               rules={[{ required: true, message: 'Please input instance count' }]}
               style={{ flex: 1 }}
             >
-              <InputNumber min={1} max={100} style={{ width: '100%' }} />
+              <InputNumber min={0} max={100} style={{ width: '100%' }} />
             </Form.Item>
           </div>
 
@@ -2046,6 +2313,46 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           </Card>
 
         </Form>
+      </Modal>
+
+      {/* HyperPod Karpenter Resource Modal */}
+      <Modal
+        title="Add HyperPod Karpenter Resource"
+        open={hyperpodKarpenterResourceModalVisible}
+        onOk={handleCreateHyperPodKarpenterResource}
+        onCancel={() => {
+          setHyperpodKarpenterResourceModalVisible(false);
+          setSelectedInstanceGroups([]);
+        }}
+        confirmLoading={hyperpodKarpenterResourceCreating}
+        width={600}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text>Select HyperPod Instance Groups (On-Demand only):</Text>
+        </div>
+        <Checkbox.Group
+          value={selectedInstanceGroups}
+          onChange={setSelectedInstanceGroups}
+          style={{ width: '100%' }}
+        >
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {hyperPodGroups
+              .filter(group => group.capacityType === 'on-demand')
+              .map(group => (
+                <Checkbox key={group.name} value={group.name}>
+                  <Space>
+                    <Text strong>{group.name}</Text>
+                    <Tag>{group.instanceType}</Tag>
+                    <Tag color="green">OD</Tag>
+                    <Text type="secondary">({group.currentCount} nodes)</Text>
+                  </Space>
+                </Checkbox>
+              ))}
+          </Space>
+        </Checkbox.Group>
+        {hyperPodGroups.filter(g => g.capacityType === 'on-demand').length === 0 && (
+          <Text type="secondary">No On-Demand instance groups available</Text>
+        )}
       </Modal>
 
     </div>

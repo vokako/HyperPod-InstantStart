@@ -1376,13 +1376,13 @@ class KarpenterManager {
   // ===== YAML 模板生成方法 =====
 
   /**
-   * 生成 NodeClass YAML (支持指定特定子网)
+   * 生成 NodeClass YAML - 旧版本使用 bootstrap.sh (已废弃)
    * @param {Object} config - NodeClass 配置
    * @param {Object} stackInfo - 集群基础设施信息
    * @param {string} specificSubnet - 可选的特定子网ID
    * @returns {string} NodeClass YAML 内容
    */
-  static generateNodeClassYaml(config, stackInfo, specificSubnet = null) {
+  static generateNodeClassYamlOld(config, stackInfo, specificSubnet = null) {
     let subnetSelectorYaml = '';
 
     if (specificSubnet) {
@@ -1424,6 +1424,55 @@ ${subnetSelectorYaml}
     #!/bin/bash
     set -ex
     /etc/eks/bootstrap.sh '${stackInfo.EKS_CLUSTER_NAME}'
+`;
+  }
+
+  /**
+   * 生成 NodeClass YAML - 新版本使用 nodeadm (AL2023)
+   * @param {Object} config - NodeClass 配置
+   * @param {Object} stackInfo - 集群基础设施信息
+   * @param {string} specificSubnet - 可选的特定子网ID
+   * @returns {string} NodeClass YAML 内容
+   */
+  static generateNodeClassYaml(config, stackInfo, specificSubnet = null) {
+    let subnetSelectorYaml = '';
+
+    if (specificSubnet) {
+      // 使用指定的特定子网
+      console.log(`Using specific subnet for Karpenter: ${specificSubnet}`);
+      subnetSelectorYaml = `  subnetSelectorTerms:
+    - id: ${specificSubnet}`;
+    } else {
+      // 回退到标签发现机制
+      console.log(`Using discovery tags for subnet selection`);
+      subnetSelectorYaml = `  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${stackInfo.EKS_CLUSTER_NAME}"`;
+    }
+
+    // AL2023 不需要 userData，Karpenter 会自动处理
+    // 参考：https://karpenter.sh/docs/concepts/nodeclasses/#amazon-linux-2023
+    return `---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: ${config.nodeClassName}
+spec:
+  role: "KarpenterNodeRole-${stackInfo.EKS_CLUSTER_NAME}"
+  amiSelectorTerms:
+    - alias: "${config.amiAlias || 'al2023@latest'}"
+${subnetSelectorYaml}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${stackInfo.EKS_CLUSTER_NAME}"
+    - id: ${stackInfo.SECURITY_GROUP_ID}
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: ${config.volumeSize || 200}Gi
+        volumeType: ${config.volumeType || 'gp3'}
+        deleteOnTermination: true
+        encrypted: ${config.encrypted !== false}
 `;
   }
 

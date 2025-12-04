@@ -205,6 +205,21 @@ const ClusterStatusV2Redux = () => {
       width: '12%',
       render: (_, record) => {
         const labels = record.labels || {};
+        
+        // 判断是否为 Karpenter 管理的节点（任一标签不为 null）
+        const isKarpenter = labels['karpenter.sh/nodepool'] != null || labels['karpenter.sh/nodeclaim'] != null;
+
+        // HyperPod Karpenter节点 (优先判断)
+        if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod' && isKarpenter) {
+          return (
+            <div>
+              <Tag color="#fa8c16">HyperPod Karpenter</Tag>
+              <div style={{ fontSize: '11px', color: '#666', marginTop: 2 }}>
+                On-Demand
+              </div>
+            </div>
+          );
+        }
 
         // HyperPod节点
         if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod') {
@@ -222,7 +237,7 @@ const ClusterStatusV2Redux = () => {
         }
 
         // EC2 Karpenter节点
-        if (labels['karpenter.sh/nodepool']) {
+        if (isKarpenter) {
           const capacityType = labels['karpenter.sh/capacity-type'] || 'unknown';
           return (
             <div>
