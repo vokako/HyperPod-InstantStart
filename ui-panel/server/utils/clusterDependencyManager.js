@@ -196,7 +196,7 @@ echo "Region: $AWS_REGION" &&
 helm upgrade --install hyperpod-dependencies ./sagemaker-hyperpod-cli/helm_chart/HyperPodHelmChart \\
   --kube-context arn:aws:eks:$AWS_REGION:$(aws sts get-caller-identity --query Account --output text):cluster/$EKS_CLUSTER_NAME \\
   --namespace kube-system \\
-  --set cert-manager.enabled=false \\
+  --set cert-manager.enabled=true \\
   --set neuron-device-plugin.devicePlugin.enabled=false \\
   --set nvidia-device-plugin.devicePlugin.enabled=true \\
   --set aws-efa-k8s-device-plugin.devicePlugin.enabled=true \\
