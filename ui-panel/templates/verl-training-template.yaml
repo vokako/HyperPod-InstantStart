@@ -5,7 +5,7 @@ metadata:
   namespace: default
 spec:
   entrypoint: bash /s3/train-recipes/ENTRY_POINT_PATH
-  backoffLimit: 0
+  # backoffLimit: 0
   shutdownAfterJobFinishes: true
   ttlSecondsAfterFinished: 3600
   rayClusterSpec:
@@ -15,6 +15,9 @@ spec:
         dashboard-host: '0.0.0.0'
         dashboard-port: '8265'
       template:
+        metadata:
+          labels:
+            hami.io/webhook: ignore
         spec:
           nodeSelector:
             beta.kubernetes.io/instance-type: INSTANCE_TYPE
@@ -41,6 +44,10 @@ spec:
               value: "INFO"
             - name: NCCL_SOCKET_IFNAME
               value: "eth0"
+            - name: INSTRT_NUM_NODES
+              value: "WORKER_REPLICAS"
+            - name: INSTRT_PROC_PER_NODE
+              value: "GPU_PER_NODE"
             volumeMounts:
             - name: persistent-storage-s3
               mountPath: /s3
@@ -76,6 +83,9 @@ spec:
       groupName: worker-group
       rayStartParams: {}
       template:
+        metadata:
+          labels:
+            hami.io/webhook: ignore
         spec:
           nodeSelector:
             beta.kubernetes.io/instance-type: INSTANCE_TYPE
@@ -102,6 +112,10 @@ spec:
               value: "INFO"
             - name: NCCL_SOCKET_IFNAME
               value: "eth0"
+            - name: INSTRT_NUM_NODES
+              value: "WORKER_REPLICAS"
+            - name: INSTRT_PROC_PER_NODE
+              value: "GPU_PER_NODE"
             volumeMounts:
             - name: persistent-storage-s3
               mountPath: /s3
