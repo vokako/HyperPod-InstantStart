@@ -1419,6 +1419,11 @@ ${subnetSelectorYaml}
         volumeType: ${config.volumeType || 'gp3'}
         deleteOnTermination: true
         encrypted: ${config.encrypted !== false}
+  # 251204
+  userData: |
+    #!/bin/bash
+    set -ex
+    /etc/eks/bootstrap.sh '${stackInfo.EKS_CLUSTER_NAME}'
 `;
   }
 
