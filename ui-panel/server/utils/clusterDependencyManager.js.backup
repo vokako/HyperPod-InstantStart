@@ -53,40 +53,55 @@ class ClusterDependencyManager {
   }
   
   /**
-   * 获取CloudFormation Stack的输出信息（统一入口）
+   * 获取CloudFormation Stack的输出信息
    */
   static async fetchCloudFormationOutputs(clusterConfigDir, clusterTag = null) {
     console.log('Fetching CloudFormation outputs...');
     
-    if (!clusterTag) {
-      throw new Error('clusterTag is required');
+    // 如果提供了clusterTag，尝试从metadata获取
+    if (clusterTag) {
+      const MetadataUtils = require('./metadataUtils');
+      
+      // 对于创建的集群和导入的集群，都尝试从metadata获取
+      const clusterType = MetadataUtils.getClusterType(clusterTag);
+      if (clusterType === 'created' || clusterType === 'imported') {
+        console.log(`Using metadata for ${clusterType} cluster: ${clusterTag}`);
+        const stackEnvsContent = MetadataUtils.generateStackEnvsFromMetadata(clusterTag);
+        
+        const stackEnvsPath = path.join(clusterConfigDir, 'stack_envs');
+        fs.writeFileSync(stackEnvsPath, stackEnvsContent);
+        
+        console.log('Generated stack_envs from metadata');
+        return stackEnvsPath;
+      }
     }
     
-    const MetadataUtils = require('./metadataUtils');
-    const clusterType = MetadataUtils.getClusterType(clusterTag);
+    // 对于未知类型的集群或未提供clusterTag的情况，从CloudFormation API获取
+    console.log('Fetching from CloudFormation API...');
+    const fetchCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && 
+aws cloudformation describe-stacks --stack-name $CLOUD_FORMATION_FULL_STACK_NAME --region $AWS_REGION --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" --output text | 
+while read -r key value; do
+  case $key in
+    "OutputEKSClusterName") echo "export EKS_CLUSTER_NAME=$value" ;;
+    "OutputEKSClusterArn") echo "export EKS_CLUSTER_ARN=$value" ;;
+    "OutputS3BucketName") echo "export LIFECYCLE_S3_BUCKET_NAME=$value" ;;
+    "OutputSageMakerIAMRoleArn") echo "export EXECUTION_ROLE=$value" ;;
+    "OutputVpcId") echo "export VPC_ID=$value" ;;
+    "OutputPrivateSubnetIds") echo "export PRIVATE_SUBNET_ID=$value" ;;
+    "OutputSecurityGroupId") echo "export SECURITY_GROUP_ID=$value" ;;
+    "OutputHyperPodClusterName") echo "export HP_CLUSTER_NAME=$value" ;;
+    "OutputHyperPodClusterArn") echo "export HP_CLUSTER_ARN=$value" ;;
+  esac
+done > stack_envs'`;
     
-    if (clusterType === 'created') {
-      return await this.generateStackEnvsFromMetadata(clusterConfigDir, clusterTag, 'created');
-    } else if (clusterType === 'imported') {
-      return await this.generateStackEnvsFromMetadata(clusterConfigDir, clusterTag, 'imported');
-    } else {
-      throw new Error(`Unknown cluster type: ${clusterType}`);
-    }
-  }
-
-  /**
-   * 从 metadata 生成 stack_envs 文件（通用方法）
-   */
-  static async generateStackEnvsFromMetadata(clusterConfigDir, clusterTag, clusterType) {
-    console.log(`Generating stack_envs for ${clusterType} cluster: ${clusterTag}`);
+    await this.executeNonBlocking(fetchCmd);
     
-    const MetadataUtils = require('./metadataUtils');
-    const stackEnvsContent = MetadataUtils.generateStackEnvsFromMetadata(clusterTag);
-    
+    // 验证stack_envs文件是否创建成功
     const stackEnvsPath = path.join(clusterConfigDir, 'stack_envs');
-    fs.writeFileSync(stackEnvsPath, stackEnvsContent);
+    if (!fs.existsSync(stackEnvsPath)) {
+      throw new Error('Failed to create stack_envs file');
+    }
     
-    console.log('Generated stack_envs from metadata');
     return stackEnvsPath;
   }
 
@@ -159,8 +174,11 @@ fi`;
   static async createNamespaces(clusterConfigDir) {
     console.log('Creating namespaces...');
     const namespaceCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
-kubectl create namespace aws-hyperpod --dry-run=client -o yaml | kubectl apply -f - &&
-kubectl create namespace kubeflow --dry-run=client -o yaml | kubectl apply -f -'`;
+kubectl create namespace aws-hyperpod --dry-run=client -o yaml | kubectl apply -f -'`;
+    
+//     const namespaceCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+// kubectl create namespace aws-hyperpod --dry-run=client -o yaml | kubectl apply -f - &&
+// kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -'`;
     
     await this.executeNonBlocking(namespaceCmd);
   }
@@ -480,7 +498,84 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
     await this.executeNonBlocking(commands);
   }
 
+  /**
+   * 配置 HyperPod Training Operator 的权限（仅在有 HyperPod 集群时需要）
+   */
+  static async installCertificationDependency(clusterConfigDir) {
+    console.log('Installing certification dependencies...');
+    
+    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
 
+    # 检查是否有 HyperPod 执行角色
+    if [ -z "\$EXECUTION_ROLE" ]; then
+        echo "No EXECUTION_ROLE found, skipping HyperPod-specific IAM configuration"
+        exit 0
+    fi
+
+    # 提取SageMaker执行角色名称
+    EXEC_ROLE_NAME=\${EXECUTION_ROLE##*/}
+    echo "Using execution role: \$EXEC_ROLE_NAME"
+
+    # 1. 为SageMaker执行角色添加DescribeClusterNode权限
+    echo "Adding SageMaker DescribeClusterNode policy..."
+    aws iam put-role-policy \\
+        --role-name \$EXEC_ROLE_NAME \\
+        --policy-name SageMakerDescribeClusterNode \\
+        --policy-document '"'"'{
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sagemaker:DescribeClusterNode"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }'"'"'
+
+    # 2. 更新角色信任策略，允许EKS Pod Identity
+    echo "Updating assume role policy for EKS Pod Identity..."
+    aws iam update-assume-role-policy \\
+        --role-name \$EXEC_ROLE_NAME \\
+        --policy-document '"'"'{
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "sagemaker.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+            },
+            {
+                "Sid": "AllowEksAuthToAssumeRoleForPodIdentity",
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                },
+                "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                ]
+            }
+        ]
+    }'"'"'
+
+    # 3. 创建Pod Identity Association
+    echo "Creating Pod Identity Association..."
+    aws eks create-pod-identity-association \\
+        --cluster-name \$EKS_CLUSTER_NAME \\
+        --role-arn \$EXECUTION_ROLE \\
+        --namespace aws-hyperpod \\
+        --service-account hp-training-operator-controller-manager \\
+        --region \$AWS_REGION >> /app/tmp/dependency-install.log 2>&1 || echo "Pod Identity Association already exists"
+
+    echo "HyperPod Training Operator IAM configuration completed"
+    '`;
+    
+    await this.executeNonBlocking(commands);
+  }
 
   /**
    * 导入集群的依赖配置流程

@@ -297,17 +297,23 @@ class S3StorageManager {
       }
 
       const config = fs.readJsonSync(configPath);
-      const storage = config.storages.find(s => s.name === name);
+      let storage = config.storages.find(s => s.name === name);
       
+      // 如果配置文件中没有，尝试从检测到的存储中查找
       if (!storage) {
-        return { success: false, error: 'Storage not found' };
+        const existingStorages = await this.detectExistingS3Storages();
+        storage = existingStorages.find(s => s.name === name);
+        
+        if (!storage) {
+          return { success: false, error: 'Storage not found' };
+        }
       }
 
       // 删除PVC和PV
       await this.deleteKubernetesResource('pvc', storage.pvcName);
       await this.deleteKubernetesResource('pv', storage.pvName);
 
-      // 从配置中移除
+      // 从配置中移除（如果存在）
       config.storages = config.storages.filter(s => s.name !== name);
       fs.writeJsonSync(configPath, config);
 
