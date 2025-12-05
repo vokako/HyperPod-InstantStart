@@ -2344,7 +2344,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         width={600}
       >
         <div style={{ marginBottom: 16 }}>
-          <Text>Select HyperPod Instance Groups (On-Demand only):</Text>
+          <Text>Select HyperPod Instance Groups:</Text>
         </div>
         <Checkbox.Group
           value={selectedInstanceGroups}
@@ -2352,22 +2352,22 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           style={{ width: '100%' }}
         >
           <Space direction="vertical" style={{ width: '100%' }}>
-            {hyperPodGroups
-              .filter(group => group.capacityType === 'on-demand')
-              .map(group => (
-                <Checkbox key={group.name} value={group.name}>
-                  <Space>
-                    <Text strong>{group.name}</Text>
-                    <Tag>{group.instanceType}</Tag>
-                    <Tag color="green">OD</Tag>
-                    <Text type="secondary">({group.currentCount} nodes)</Text>
-                  </Space>
-                </Checkbox>
-              ))}
+            {hyperPodGroups.map(group => (
+              <Checkbox key={group.name} value={group.name}>
+                <Space>
+                  <Text strong>{group.name}</Text>
+                  <Tag>{group.instanceType}</Tag>
+                  <Tag color={group.capacityType === 'on-demand' ? 'green' : 'orange'}>
+                    {group.capacityType === 'on-demand' ? 'OD' : 'Spot'}
+                  </Tag>
+                  <Text type="secondary">({group.currentCount} nodes)</Text>
+                </Space>
+              </Checkbox>
+            ))}
           </Space>
         </Checkbox.Group>
-        {hyperPodGroups.filter(g => g.capacityType === 'on-demand').length === 0 && (
-          <Text type="secondary">No On-Demand instance groups available</Text>
+        {hyperPodGroups.length === 0 && (
+          <Text type="secondary">No instance groups available</Text>
         )}
       </Modal>
 

@@ -132,6 +132,11 @@ class HyperPodKarpenterInstaller {
       const tagOutput = execSync(tagCmd, { encoding: 'utf8' });
       await fs.appendFile(logFile, `Tag added successfully\n${tagOutput}\n\n`);
       
+      // 等待 IAM 资源传播（最终一致性）
+      await fs.appendFile(logFile, `Waiting 20 seconds for IAM resources to propagate...\n`);
+      await new Promise(resolve => setTimeout(resolve, 20000));
+      await fs.appendFile(logFile, `Wait completed\n\n`);
+      
       // 4. Update Cluster
       const roleArn = `arn:aws:iam::${accountId}:role/${roleName}`;
       await fs.appendFile(logFile, `Step 4: Updating HyperPod cluster with Karpenter\n`);
@@ -143,9 +148,14 @@ class HyperPodKarpenterInstaller {
         const updateOutput = execSync(updateClusterCmd, { encoding: 'utf8' });
         await fs.appendFile(logFile, `Cluster updated successfully\n${updateOutput}\n\n`);
       } catch (error) {
-        // 如果错误是"没有变化"，说明集群已经配置好了
-        if (error.message.includes('no changes') || error.message.includes('ValidationException')) {
-          await fs.appendFile(logFile, `Cluster already configured with Karpenter, skipping update\n\n`);
+        // 记录完整的错误信息
+        await fs.appendFile(logFile, `Update cluster error: ${error.message}\n`);
+        await fs.appendFile(logFile, `Error stderr: ${error.stderr || 'N/A'}\n`);
+        await fs.appendFile(logFile, `Error stdout: ${error.stdout || 'N/A'}\n\n`);
+        
+        // 只有明确的"no changes"才跳过，其他错误都抛出
+        if (error.message.includes('no changes')) {
+          await fs.appendFile(logFile, `No changes needed, cluster already configured\n\n`);
         } else {
           throw error;
         }
