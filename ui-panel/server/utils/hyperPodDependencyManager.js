@@ -176,6 +176,7 @@ class HyperPodDependencyManager {
     
     const commands = `cd ${configDir} && bash -c 'source init_envs && source stack_envs && 
     
+    echo "Phase 1: Checking cert-manager addon status..."
     MAX_WAIT=20
     WAIT_COUNT=0
     
@@ -188,10 +189,10 @@ class HyperPodDependencyManager {
             --output text 2>/dev/null || echo "UNKNOWN")
         
         if [ "\$CERT_STATUS" = "ACTIVE" ]; then
-            echo "cert-manager is ready (ACTIVE)"
+            echo "✅ cert-manager addon is ACTIVE"
             break
         elif [ "\$CERT_STATUS" = "CREATE_FAILED" ] || [ "\$CERT_STATUS" = "DEGRADED" ]; then
-            echo "WARNING: cert-manager status: \$CERT_STATUS, but continuing..."
+            echo "⚠️  cert-manager status: \$CERT_STATUS, but continuing..."
             break
         else
             echo "cert-manager status: \$CERT_STATUS, waiting... (\$((WAIT_COUNT+1))/\$MAX_WAIT)"
@@ -199,6 +200,29 @@ class HyperPodDependencyManager {
             WAIT_COUNT=\$((WAIT_COUNT+1))
         fi
     done
+
+    echo ""
+    echo "Phase 2: Checking cert-manager webhook endpoints..."
+    MAX_WAIT=30
+    WAIT_COUNT=0
+    
+    while [ \$WAIT_COUNT -lt \$MAX_WAIT ]; do
+        ENDPOINTS=\$(kubectl get endpoints -n cert-manager cert-manager-webhook -o jsonpath="{.subsets[*].addresses[*].ip}" 2>/dev/null)
+        
+        if [ -n "\$ENDPOINTS" ]; then
+            echo "✅ cert-manager webhook endpoints ready: \$ENDPOINTS"
+            break
+        else
+            echo "⏳ Waiting for cert-manager webhook endpoints... (\$((WAIT_COUNT+1))/\$MAX_WAIT)"
+            sleep 10
+            WAIT_COUNT=\$((WAIT_COUNT+1))
+        fi
+    done
+    
+    echo ""
+    echo "Phase 3: Waiting additional for webhook to stabilize..."
+    sleep 10
+    echo "✅ cert-manager is fully ready"
     '`;
     
     await this.executeNonBlocking(commands);
