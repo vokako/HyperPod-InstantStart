@@ -15,7 +15,7 @@ HyperPod InstantStart is a training-and-inference integrated platform built on S
 
 HyperPod-InstantStart provides a unified interface for managing ML infrastructure, from cluster provisioning to training job orchestration and model serving.
 
-- For training, it can leverage standard Kubeflow on Kubernetes (compatible with both EC2 and HyperPod nodes), the HyperPod Training Operator (applicable to HyperPod nodes, significantly simplifying distributed configuration with process-level recovery and log exception monitoring; optional), or KubeRay (as an orchestrator for the reinforcement learning framework VERL). 
+- For training, it leverages HyperPod Training Operator (significantly simplifying distributed configuration with process-level recovery and log exception monitoring; optional), or KubeRay (as an orchestrator for the reinforcement learning framework VERL).
 - For inference, it supports deployment on single or multi-node setups using arbitrary containers, such as standard vLLM/SGLang or self-buit containers, while also providing standardized API exposure (e.g., OpenAI-compatible API). 
 - Additionally, it offers managed MLFlow Tracking Server for storing training metrics, enabling sharing and collaboration with fine-grained IAM permission controls.
 
@@ -54,7 +54,7 @@ For detailed setup instructions, please refer to [Feishu Doc (zh_cn)](https://am
 | Type | Feature | Updated At | Target Date |
 |------|---------|-----------|-------------------|
 | Cluster Building | Unified Scaling | 2025-10-19 | DONE |
-| Training | TorchTitan/Whisper Training Recipe Integration | 2025-10-17 | TBD |
+| Training | TorchTitan Training Recipe Integration | 2025-10-17 | TBD |
+| Training | MS-Swift Training Recipe Integration | 2025-11-30 | TBD |
 | Inference | Intelligent Routing Support | 2025-10-19 | DONE |
 | Inference | HyperPod, EKS Node Group and Karpenter unified management | 2025-10-19 | DONE |
-| Inference | Cross node EP and PD Disaggregated Inference Recipe | 2025-10-19 | TBD |
