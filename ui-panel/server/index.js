@@ -7756,17 +7756,8 @@ app.get('/api/cluster/hyperpod-creation-status/:clusterTag', async (req, res) =>
         const stackStatus = execSync(checkCmd, { encoding: 'utf8', timeout: 10000 }).trim();
         
         if (stackStatus === 'CREATE_COMPLETE') {
-          // 创建完成，先注册HyperPod信息，再清理状态
-          await registerCompletedHyperPod(clusterTag);
-          updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
-          
-          broadcast({
-            type: 'hyperpod_creation_completed',
-            status: 'success',
-            message: `HyperPod cluster created successfully: ${status.stackName}`,
-            clusterTag: clusterTag
-          });
-          
+          // 只返回状态，配置流程由定时检查器统一触发
+          status.cfStatus = 'CREATE_COMPLETE';
           return res.json({ success: true, status: { ...status, cfStatus: 'CREATE_COMPLETE' } });
         } else if (stackStatus.includes('FAILED') || stackStatus.includes('ROLLBACK') || stackStatus.includes('DELETE')) {
           // 创建失败，自动清理记录
@@ -7817,8 +7808,8 @@ app.get('/api/cluster/creating-hyperpod-clusters', async (req, res) => {
           const stackStatus = execSync(checkCmd, { encoding: 'utf8', timeout: 10000 }).trim();
           
           if (stackStatus === 'CREATE_COMPLETE') {
-            await registerCompletedHyperPod(clusterTag);
-            updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
+            // 只更新状态，配置流程由定时检查器统一触发
+            clusterInfo.cfStatus = 'CREATE_COMPLETE';
           } else if (stackStatus === 'DELETE_COMPLETE') {
             // 删除完成，清理metadata文件和状态
             console.log(`HyperPod deletion completed: ${clusterTag}`);
