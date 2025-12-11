@@ -1032,7 +1032,12 @@ function App() {
                       // Managed Inference tab
                       {
                         key: 'managed-inference',
-                        label: 'Managed Inference',
+                        label: (
+                          <Space>
+                            Managed Inference
+                            <Badge count="NEW" style={{ backgroundColor: '#52c41a' }} />
+                          </Space>
+                        ),
                         children: (
                           <ManagedInferencePanel
                             onDeploy={handleDeploy}

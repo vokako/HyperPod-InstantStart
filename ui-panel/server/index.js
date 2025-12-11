@@ -772,7 +772,7 @@ app.post('/api/deploy', async (req, res) => {
       s3BucketName,  // S3 存储桶名称
       s3Region,  // S3 区域
       modelLocation,  // S3 中的模型路径
-      workerArgs  // Worker 参数（多行字符串，每行一个参数）
+      workerCommand  // Worker 命令（bash 风格字符串，与 ConfigPanel 格式相同）
     } = req.body;
 
     console.log('Inference deployment request:', {
@@ -852,42 +852,68 @@ app.post('/api/deploy', async (req, res) => {
     if (deploymentType === 'managed-inference') {
       console.log('Processing managed-inference deployment');
 
+      // 使用 deploymentName 作为 modelName
+      const effectiveModelName = deploymentName;
+
       // 验证必需字段
-      if (!modelName || !instanceType || !s3BucketName || !s3Region || !modelLocation) {
+      if (!deploymentName || !instanceType || !s3BucketName || !s3Region || !modelLocation) {
         throw new Error('Missing required fields for managed inference deployment');
       }
 
       const templatePath = path.join(__dirname, '../templates/managed-inference-template.yaml');
       const templateContent = await fs.readFile(templatePath, 'utf8');
 
-      // 处理 worker args - 将多行字符串转换为 YAML 数组格式
+      // 使用 parseVllmCommand 解析命令（复用 ConfigPanel 的解析逻辑）
+      const parsedCommand = parseVllmCommand(workerCommand);
+      console.log('Parsed managed inference command:', parsedCommand);
+
+      // 转换为 YAML 数组格式
+      // 对于 vLLM (vllm serve)，只使用参数部分（args），因为镜像已有 ENTRYPOINT
+      // 对于 SGLang 等其他命令，使用完整命令（fullCommand）
       let workerArgsYaml = '';
-      if (workerArgs && workerArgs.trim()) {
-        const argsArray = workerArgs.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-        workerArgsYaml = argsArray.map(arg => `\n      - "${arg}"`).join('');
+      let argsToUse = [];
+
+      if (parsedCommand.commandType === 'vllm') {
+        // vLLM: 镜像有 ENTRYPOINT ["vllm", "serve"]，只需要参数
+        argsToUse = parsedCommand.args || [];
+        console.log('Using args only for vLLM (ENTRYPOINT exists):', argsToUse);
+      } else {
+        // SGLang/Custom: 需要完整命令
+        argsToUse = parsedCommand.fullCommand || [];
+        console.log('Using full command for non-vLLM:', argsToUse);
       }
 
-      // 处理 CPU 和 Memory 请求（可选）
+      if (argsToUse.length > 0) {
+        workerArgsYaml = argsToUse.map(arg => `\n      - "${arg}"`).join('');
+      }
+
+      // 处理 GPU Memory (HAMi)
+      let gpuMemoryYaml = '';
+      if (gpuMemory && gpuMemory !== -1 && gpuMemory > 0) {
+        gpuMemoryYaml = `\n        nvidia.com/gpumem: ${gpuMemory}`;
+      }
+
+      // 处理 CPU 和 Memory 请求
+      // -1 表示不设置限制，不填充到模板中（空字符串）
       let cpuRequestYaml = '';
       let memoryRequestYaml = '';
-      if (cpuRequest && cpuRequest.trim() && cpuRequest !== '-1') {
+      if (cpuRequest && cpuRequest !== -1 && cpuRequest > 0) {
         cpuRequestYaml = `\n        cpu: "${cpuRequest}"`;
       }
-      if (memoryRequest && memoryRequest.trim() && memoryRequest !== '-1') {
+      if (memoryRequest && memoryRequest !== -1 && memoryRequest > 0) {
         memoryRequestYaml = `\n        memory: ${memoryRequest}Gi`;
       }
 
-      // 生成 HuggingFace token 环境变量（如果提供了 token）
-      let hfTokenEnvYaml = '';
-      if (huggingFaceToken && huggingFaceToken.trim() !== '') {
-        hfTokenEnvYaml = `\n      - name: HUGGING_FACE_HUB_TOKEN
-        value: "${huggingFaceToken}"`;
-      }
+      // 生成 HAMi webhook ignore label（如果 gpuMemory 是 -1）
+      // 注意：这个 label 需要添加到 CRD 的 metadata.labels
+      const hamiLabel = gpuMemory === -1
+        ? '\n  labels:\n    hami.io/webhook: ignore'
+        : '';
 
       // 替换模板中的占位符
       newYamlContent = templateContent
-        .replace(/DEPLOYMENT_NAME/g, deploymentName || finalDeploymentTag)
-        .replace(/MODEL_NAME/g, modelName)
+        .replace(/DEPLOYMENT_NAME/g, finalDeploymentTag)
+        .replace(/MODEL_NAME/g, effectiveModelName)
         .replace(/INSTANCE_TYPE/g, instanceType)
         .replace(/REPLICAS_COUNT/g, replicas.toString())
         .replace(/S3_BUCKET_NAME/g, s3BucketName)
@@ -899,7 +925,8 @@ app.post('/api/deploy', async (req, res) => {
         .replace(/CPU_REQUEST/g, cpuRequestYaml)
         .replace(/MEMORY_REQUEST/g, memoryRequestYaml)
         .replace(/GPU_COUNT/g, gpuCount.toString())
-        .replace(/HF_TOKEN_ENV/g, hfTokenEnvYaml);
+        .replace(/GPU_MEMORY/g, gpuMemoryYaml)
+        .replace(/HAMI_LABEL/g, hamiLabel);
 
       servEngine = 'managed-inf';
       console.log('Generated managed inference YAML');
@@ -7210,14 +7237,49 @@ app.get('/api/cluster/info', async (req, res) => {
   }
 });
 
-// 获取S3存储桶列表 - 简化版本
+// 获取S3存储桶列表（用于模型存储）
 app.get('/api/cluster/s3-buckets', async (req, res) => {
   try {
-    // 简单返回空数组，让用户手动输入
+    const activeCluster = clusterManager.getActiveCluster();
+    if (!activeCluster) {
+      return res.json({
+        success: true,
+        buckets: [],
+        clusterBucket: null
+      });
+    }
+
+    let clusterBucket = null;
+
+    // 使用 s3StorageManager 获取模型存储的 S3 bucket（从 S3 CSI PV/PVC 中检测）
+    try {
+      const storageResult = await s3StorageManager.getStorages();
+
+      if (storageResult.success && storageResult.storages.length > 0) {
+        // 优先选择名为 's3-claim' 的存储（通常是主要的模型存储）
+        let selectedStorage = storageResult.storages.find(s => s.pvcName === 's3-claim');
+
+        // 如果没有 s3-claim，使用第一个存储
+        if (!selectedStorage) {
+          selectedStorage = storageResult.storages[0];
+        }
+
+        clusterBucket = {
+          name: selectedStorage.bucketName,
+          region: selectedStorage.region || 'us-west-2'
+        };
+        console.log(`Got S3 model storage bucket from s3StorageManager: ${selectedStorage.bucketName} (PVC: ${selectedStorage.pvcName})`);
+      }
+    } catch (error) {
+      console.warn('Failed to get S3 bucket from s3StorageManager:', error.message);
+    }
+
+    const buckets = clusterBucket ? [clusterBucket] : [];
+
     res.json({
       success: true,
-      buckets: [],
-      clusterBucket: null
+      buckets: buckets,
+      clusterBucket: clusterBucket
     });
   } catch (error) {
     console.error('Error getting S3 buckets:', error);

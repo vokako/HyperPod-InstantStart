@@ -288,7 +288,64 @@ class InferenceOperatorManager {
           Effect: "Allow",
           Action: [
             "ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
-            "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"
+            "ecr:GetDownloadUrlForLayer", "ecr:GetRepositoryPolicy",
+            "ecr:DescribeRepositories", "ecr:ListImages", "ecr:DescribeImages",
+            "ecr:BatchGetImage", "ecr:GetLifecyclePolicy", "ecr:GetLifecyclePolicyPreview",
+            "ecr:ListTagsForResource", "ecr:DescribeImageScanFindings"
+          ],
+          Resource: ["*"]
+        },
+        {
+          Sid: "EC2Access",
+          Effect: "Allow",
+          Action: [
+            "ec2:AssignPrivateIpAddresses", "ec2:AttachNetworkInterface",
+            "ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface",
+            "ec2:DescribeInstances", "ec2:DescribeTags", "ec2:DescribeNetworkInterfaces",
+            "ec2:DescribeInstanceTypes", "ec2:DescribeSubnets", "ec2:DetachNetworkInterface",
+            "ec2:ModifyNetworkInterfaceAttribute", "ec2:UnassignPrivateIpAddresses",
+            "ec2:CreateTags", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroups",
+            "ec2:DescribeVolumes", "ec2:DescribeVolumesModifications", "ec2:DescribeVpcs",
+            "ec2:CreateVpcEndpointServiceConfiguration", "ec2:DeleteVpcEndpointServiceConfigurations",
+            "ec2:DescribeVpcEndpointServiceConfigurations", "ec2:ModifyVpcEndpointServicePermissions"
+          ],
+          Resource: ["*"]
+        },
+        {
+          Sid: "EKSAuthAccess",
+          Effect: "Allow",
+          Action: ["eks-auth:AssumeRoleForPodIdentity"],
+          Resource: ["*"]
+        },
+        {
+          Sid: "EKSAccess",
+          Effect: "Allow",
+          Action: ["eks:AssociateAccessPolicy", "eks:Describe*", "eks:List*", "eks:AccessKubernetesApi"],
+          Resource: ["*"]
+        },
+        {
+          Sid: "ApiGatewayAccess",
+          Effect: "Allow",
+          Action: [
+            "apigateway:POST", "apigateway:GET", "apigateway:PUT",
+            "apigateway:PATCH", "apigateway:DELETE", "apigateway:UpdateRestApiPolicy"
+          ],
+          Resource: [
+            "arn:aws:apigateway:*::/vpclinks", "arn:aws:apigateway:*::/vpclinks/*",
+            "arn:aws:apigateway:*::/restapis", "arn:aws:apigateway:*::/restapis/*"
+          ]
+        },
+        {
+          Sid: "ElasticLoadBalancingAccess",
+          Effect: "Allow",
+          Action: [
+            "elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:DescribeLoadBalancers",
+            "elasticloadbalancing:DescribeLoadBalancerAttributes", "elasticloadbalancing:DescribeListeners",
+            "elasticloadbalancing:DescribeListenerCertificates", "elasticloadbalancing:DescribeSSLPolicies",
+            "elasticloadbalancing:DescribeRules", "elasticloadbalancing:DescribeTargetGroups",
+            "elasticloadbalancing:DescribeTargetGroupAttributes", "elasticloadbalancing:DescribeTargetHealth",
+            "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeTrustStores",
+            "elasticloadbalancing:DescribeListenerAttributes"
           ],
           Resource: ["*"]
         },
@@ -299,9 +356,20 @@ class InferenceOperatorManager {
           Resource: ["*"]
         },
         {
-          Sid: "EKSAccess",
+          Sid: "AllowPassRoleToSageMaker",
           Effect: "Allow",
-          Action: ["eks:Describe*", "eks:List*", "eks:AccessKubernetesApi"],
+          Action: ["iam:PassRole"],
+          Resource: `arn:aws:iam::${accountId}:role/*`,
+          Condition: {
+            StringEquals: {
+              "iam:PassedToService": "sagemaker.amazonaws.com"
+            }
+          }
+        },
+        {
+          Sid: "AcmAccess",
+          Effect: "Allow",
+          Action: ["acm:ImportCertificate", "acm:DeleteCertificate"],
           Resource: ["*"]
         }
       ]
