@@ -86,7 +86,7 @@ class MetadataUtils {
     
     // 添加账户ID环境变量
     if (accountId) {
-      content += `export ACCOUNT_ID="${accountId}"\n`;
+      content += `export ACCOUNT_ID=${accountId}\n`;
     }
     
     // 映射CloudFormation输出到环境变量
@@ -104,7 +104,7 @@ class MetadataUtils {
 
     Object.entries(outputMapping).forEach(([outputKey, envVar]) => {
       if (outputs[outputKey]) {
-        content += `export ${envVar}="${outputs[outputKey]}"\n`;
+        content += `export ${envVar}=${outputs[outputKey]}\n`;
       }
     });
 

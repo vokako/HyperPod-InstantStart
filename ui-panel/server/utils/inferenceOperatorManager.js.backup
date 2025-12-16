@@ -139,20 +139,22 @@ class InferenceOperatorManager {
     const configDir = this.clusterManager.getClusterConfigDir(activeClusterName);
     const metadataDir = this.clusterManager.getClusterMetadataDir(activeClusterName);
     
+    const initEnvsPath = path.join(configDir, 'init_envs');
+    if (!fs.existsSync(initEnvsPath)) {
+      throw new Error('Cluster configuration not found');
+    }
+
+    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
+    const awsRegionMatch = envContent.match(/export AWS_REGION=(.+)/);
+    const region = awsRegionMatch ? awsRegionMatch[1] : 'us-west-2';
+
     const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
     if (!fs.existsSync(clusterInfoPath)) {
       throw new Error('Cluster metadata not found');
     }
 
     const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
-    
-    // 从 metadata 读取信息（适用于创建和导入的集群）
-    const region = clusterInfo.region;
     const eksClusterName = clusterInfo.eksCluster?.name;
-
-    if (!region) {
-      throw new Error('AWS region not found in metadata');
-    }
 
     if (!eksClusterName) {
       throw new Error('EKS cluster name not found in metadata');
@@ -172,8 +174,8 @@ class InferenceOperatorManager {
     const { stdout: vpcId } = await execAsync(vpcCmd);
 
     return {
-      region,
-      eksClusterName,
+      region: region.trim(),
+      eksClusterName: eksClusterName.trim(),
       accountId: accountId.trim(),
       oidcId: oidcId.trim(),
       vpcId: vpcId.trim(),
@@ -603,18 +605,16 @@ class InferenceOperatorManager {
     }
 
     // 构建 Helm 安装命令
-      // --set alb.enabled=true \
-      // --set alb.region=${region} \
-      // --set alb.clusterName=${eksClusterName} \
-      // --set alb.vpcId=${vpcId} \
-
     let helmCmd = `helm install hyperpod-inference-operator ${chartPath} \
       -n hyperpod-inference-system \
       --set region=${region} \
       --set eksClusterName=${eksClusterName} \
       --set executionRoleArn=${inferenceRoleArn} \
       --set tlsCertificateS3Bucket=s3://${s3Bucket} \
-      --set alb.enabled=false \
+      --set alb.enabled=true \
+      --set alb.region=${region} \
+      --set alb.clusterName=${eksClusterName} \
+      --set alb.vpcId=${vpcId} \
       --set cert-manager.enabled=false \
       --set s3.enabled=false \
       --set keda.enabled=true \

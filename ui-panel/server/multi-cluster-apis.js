@@ -677,6 +677,17 @@ class MultiClusterAPIs {
       // 6. 更新kubectl配置（现在init_envs文件已存在）
       await this.switchKubectlConfig(eksClusterName);
 
+      // 6.5. 下载 sagemaker-hyperpod-cli 仓库
+      try {
+        const ClusterDependencyManager = require('./utils/clusterDependencyManager');
+        const clusterConfigDir = path.join(__dirname, '../managed_clusters_info', eksClusterName, 'config');
+        await ClusterDependencyManager.cloneHyperPodCLI(clusterConfigDir);
+        console.log(`Successfully cloned sagemaker-hyperpod-cli for imported cluster: ${eksClusterName}`);
+      } catch (error) {
+        console.warn(`Failed to clone sagemaker-hyperpod-cli: ${error.message}`);
+        // 不阻断导入流程
+      }
+
       // 7. 检测集群实际状态（传递用户指定的HyperPod集群）
       const detectedState = await this.detectClusterState(eksClusterName, awsRegion, hyperPodClusters);
       

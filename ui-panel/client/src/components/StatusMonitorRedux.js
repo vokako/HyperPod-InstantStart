@@ -1130,16 +1130,24 @@ const StatusMonitorRedux = ({ activeTab }) => {
           >
             Scale
           </Button>
-          <Button
-            type="primary"
-            danger
-            size="small"
-            icon={<DeleteOutlined />}
-            loading={deletingDeployments.has(record.deploymentName)}
-            onClick={() => showDeleteConfirmation(record)}
+          <Popconfirm
+            title="Delete Deployment"
+            description={`Are you sure you want to delete "${record.deploymentName}"?`}
+            onConfirm={() => handleDeploymentDelete(record.deploymentName, record.deploymentType, record.isRouter)}
+            okText="Delete"
+            cancelText="Cancel"
+            okButtonProps={{ danger: true }}
           >
-            Delete
-          </Button>
+            <Button
+              type="primary"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              loading={deletingDeployments.has(record.deploymentName)}
+            >
+              Delete
+            </Button>
+          </Popconfirm>
         </Space>
       )
     }

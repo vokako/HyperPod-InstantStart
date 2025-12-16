@@ -334,12 +334,12 @@ class ClusterManager {
     const configDir = this.getClusterConfigDir(clusterTag);
     const initEnvsPath = path.join(configDir, 'init_envs');
     
-    // 生成init_envs内容
+    // 生成init_envs内容（不加引号，与创建集群保持一致）
     let content = '#!/bin/bash\n\n';
     content += '# Imported cluster configuration\n';
     
     Object.entries(importConfig).forEach(([key, value]) => {
-      content += `export ${key}="${value}"\n`;
+      content += `export ${key}=${value}\n`;
     });
     
     fs.writeFileSync(initEnvsPath, content);
