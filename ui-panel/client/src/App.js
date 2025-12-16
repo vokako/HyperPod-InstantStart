@@ -1013,15 +1013,10 @@ function App() {
                           />
                         )
                       },
-                      // 🎨 PREVIEW ONLY - KEDA Scaling tab
+                      // Unified Scaling tab
                       {
                         key: 'keda-scaling-preview',
-                        label: (
-                          <Space>
-                            Unified Scaling
-                            <Badge count="PREVIEW" style={{ backgroundColor: '#ff4d4f' }} />
-                          </Space>
-                        ),
+                        label: 'Unified Scaling',
                         children: (
                           <ScalingPanel
                             onDeploy={handleScalingDeploy}

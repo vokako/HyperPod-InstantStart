@@ -684,7 +684,7 @@ const ManagedInferencePanel = ({ onDeploy, deploymentStatus }) => {
           }
           name="workerCommand"
           rules={[{ required: true, message: 'Please input worker command!' }]}
-          extra="/opt/ml/model default model mount path"
+          extra="/opt/ml/model (DO NOT change) automatically mapped to above S3 model path"
         >
           <TextArea
             rows={8}
@@ -973,7 +973,7 @@ const ManagedInferencePanel = ({ onDeploy, deploymentStatus }) => {
             block
             size="large"
           >
-            Deploy Managed Inference
+            Deploy with HyperPod Inference Operator
           </Button>
         </Form.Item>
       </Form>
