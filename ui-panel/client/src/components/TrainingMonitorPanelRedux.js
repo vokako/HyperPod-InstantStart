@@ -318,7 +318,12 @@ const TrainingMonitorPanelRedux = () => {
         setLogs({});
         setLogStreaming({});
       } else {
-        message.error(`Failed to fetch pods: ${result.error}`);
+        // 如果是资源未找到，显示为 info 而不是 error
+        if (result.error && result.error.includes('Resource not found')) {
+          message.info('Selected resource not found');
+        } else {
+          message.error(`Failed to fetch pods: ${result.error}`);
+        }
         setJobPods([]);
       }
     } catch (error) {
@@ -463,14 +468,6 @@ const TrainingMonitorPanelRedux = () => {
     dispatch(fetchTrainingJobs());
   }, [dispatch]);
 
-  // Effect to fetch job pods when selected job changes
-  useEffect(() => {
-    if (activeJob) {
-      setSelectedJob(activeJob);
-      fetchJobPods(activeJob);
-    }
-  }, [activeJob]);
-
   // Effect to clear selected job when training jobs list becomes empty
   useEffect(() => {
     if (trainingJobs.length === 0 && selectedJob) {
@@ -604,8 +601,22 @@ const TrainingMonitorPanelRedux = () => {
         extra={
           <Button
             icon={<ReloadOutlined />}
-            onClick={() => dispatch(fetchTrainingJobs())}
-            loading={loading}
+            onClick={() => {
+              dispatch(fetchTrainingJobs());
+              // 如果有选中的任务，重新获取其 Pod 状态
+              if (selectedJob) {
+                // 停止所有日志流
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                  websocket.send(JSON.stringify({ type: 'stop_all_log_streams' }));
+                }
+                // 清空日志和流状态
+                setLogs({});
+                setLogStreaming({});
+                // 重新获取 Pod 列表
+                fetchJobPods(selectedJob);
+              }
+            }}
+            loading={loading || podsLoading}
             size="small"
           >
             Refresh

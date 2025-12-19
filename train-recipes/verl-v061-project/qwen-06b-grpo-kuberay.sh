@@ -7,17 +7,19 @@ echo "=== Starting VeRL Training on KubeRay ==="
 
 export PYTHONPATH=/verl_workspace:/verl_workspace/verl
 
-cd /verl_workspace
+VERL_DIR=/verl_workspace
+
+cd $VERL_DIR
 mkdir -p data
-python verl/examples/data_preprocess/gsm8k.py --local_dir data/gsm8k
+python3 verl/examples/data_preprocess/gsm8k.py --local_dir data/gsm8k
 
 python3 -c "import ray; print(f'Ray initialized: {ray.is_initialized()}'); print(f'Ray nodes: {len(ray.nodes()) if ray.is_initialized() else 0}')"
 # export VLLM_ATTENTION_BACKEND=XFORMERS
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files=/s3/train-recipes/verl-v061-project/data/gsm8k/train.parquet \
-    data.val_files=/s3/train-recipes/verl-v061-project/data/gsm8k/test.parquet \
+    data.train_files=$VERL_DIR/data/gsm8k/train.parquet \
+    data.val_files=$VERL_DIR/data/gsm8k/test.parquet \
     data.train_batch_size=128 \
     data.max_prompt_length=512 \
     data.max_response_length=1024 \
