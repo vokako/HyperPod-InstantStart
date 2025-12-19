@@ -313,7 +313,7 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes, in
             size="large"
             block
           >
-            Launch VERL Training Job
+            Launch Ray Training
           </Button>
         </Form.Item>
       </Form>

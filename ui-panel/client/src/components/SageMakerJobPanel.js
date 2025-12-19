@@ -345,7 +345,7 @@ const SageMakerJobPanel = ({ onLaunch, deploymentStatus }) => {
             className="training-btn"
             block
           >
-            Launch SageMaker Job
+            Launch SageMaker Training Job
           </Button>
         </Form.Item>
       </Form>

@@ -403,7 +403,7 @@ const TorchRecipePanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes, i
             className="training-btn"
             block
           >
-            Launch Training Job
+            Launch HyperPod Training
           </Button>
         </Form.Item>
       </Form>

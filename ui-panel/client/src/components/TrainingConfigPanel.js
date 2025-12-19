@@ -383,7 +383,7 @@ const TrainingConfigPanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes
             className="training-btn"
             block
           >
-            Launch Training Job
+            Launch HyperPod Training
           </Button>
         </Form.Item>
       </Form>
