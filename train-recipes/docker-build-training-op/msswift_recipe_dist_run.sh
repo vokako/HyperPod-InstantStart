@@ -15,7 +15,8 @@ if [ ! -d "ms-swift" ]; then
     git clone -b v3.11.1 https://github.com/modelscope/ms-swift.git
 fi
 
-pip install -e ms-swift/
+cd ms-swift/ && pip install -e .
+cd ..
 
 SERVER_LOG_LEVEL=${SERVER_LOG_LEVEL:-info}
     # --post-train-script=$DOCKER_WORKDIR/post_train.sh \
@@ -26,4 +27,4 @@ hyperpodrun \
     --server-log-level=${SERVER_LOG_LEVEL} \
     --tee=3 --log_dir=/tmp/hyperpod \
         -m $MSSWIFT_COMMAND_TYPE \
-        --config $MSSWIFT_RECIPE_YAML_FILE
+        $MSSWIFT_RECIPE_YAML_FILE

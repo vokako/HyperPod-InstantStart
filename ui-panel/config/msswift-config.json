@@ -1,12 +1,11 @@
 {
-  "trainingJobName": "msswift-6",
+  "trainingJobName": "msswift-1",
   "instanceType": "ml.g6.12xlarge",
-  "dockerImage": "public.ecr.aws/t5u4s6i0/hypd-training-op-torch28-pub:v1217-5",
+  "dockerImage": "public.ecr.aws/t5u4s6i0/hypd-training-op-torch28-msswift-put:v1219a",
   "efaCount": 1,
   "nprocPerNode": 4,
   "replicas": 2,
   "msswiftRecipeRunPath": "/s3/train-recipes/ms-swift-project/",
   "msswiftCommandType": "swift sft",
-  "msswiftRecipeYamlFile": "sample1-sft.yaml",
-  "mlflowTrackingUri": ""
+  "msswiftRecipeYamlFile": "sample1-sft.json"
 }

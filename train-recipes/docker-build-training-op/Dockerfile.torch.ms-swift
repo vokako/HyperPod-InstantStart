@@ -14,7 +14,7 @@ RUN pip install --no-build-isolation flash-attn==2.8.3
 # RUN pip install mlflow==3.0.0 sagemaker-mlflow==0.1.0
 RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu129
 
-# RUN pip install ms-swift -U
+RUN pip install ms-swift
 
 # RUN apt-get update && apt-get install gettext-base
 # RUN apt-get update && apt-get install -y gettext-base && rm -rf /var/lib/apt/lists/*

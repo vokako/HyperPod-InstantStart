@@ -499,58 +499,67 @@ const StatusMonitorRedux = ({ activeTab }) => {
 
   // Pod状态相关函数
   const getPodStatus = (pod) => {
+    // 优先检查是否正在删除（Terminating）
+    if (pod.metadata?.deletionTimestamp) {
+      return 'Terminating';
+    }
+
     const phase = pod.status?.phase;
-    const conditions = pod.status?.conditions || [];
     const containerStatuses = pod.status?.containerStatuses || [];
 
-    // 检查容器状态，优先显示容器的实际状态
+    // 检查容器状态，透传容器的实际状态原因
     for (const containerStatus of containerStatuses) {
-      if (containerStatus.state?.waiting) {
-        return containerStatus.state.waiting.reason?.toLowerCase() || 'waiting';
+      if (containerStatus.state?.waiting?.reason) {
+        return containerStatus.state.waiting.reason;
       }
-      if (containerStatus.state?.terminated) {
-        return containerStatus.state.terminated.reason?.toLowerCase() || 'terminated';
+      if (containerStatus.state?.terminated?.reason) {
+        return containerStatus.state.terminated.reason;
       }
     }
 
-    if (phase === 'Running') {
-      const readyCondition = conditions.find(c => c.type === 'Ready');
-      return readyCondition?.status === 'True' ? 'running' : 'not-ready';
-    }
-
-    return phase?.toLowerCase() || 'unknown';
+    // 透传 Pod phase
+    return phase || 'Unknown';
   };
 
   const getPodStatusColor = (status) => {
-    switch (status) {
-      case 'running': return 'success';
-      case 'succeeded': return 'success';
-      case 'completed': return 'success';
-      case 'failed': return 'error';
-      case 'error': return 'error';
-      case 'imagepullbackoff': return 'error';
-      case 'errimagepull': return 'error';
-      case 'crashloopbackoff': return 'error';
-      case 'not-ready': return 'warning';
-      case 'terminating': return 'warning';
-      default: return 'processing';
+    const statusLower = status?.toLowerCase() || '';
+    
+    // 成功状态
+    if (['running', 'succeeded', 'completed'].includes(statusLower)) {
+      return 'success';
     }
+    
+    // 错误状态
+    if (['failed', 'error', 'imagepullbackoff', 'errimagepull', 
+         'crashloopbackoff', 'oomkilled'].includes(statusLower)) {
+      return 'error';
+    }
+    
+    // 警告状态
+    if (['terminating', 'pending', 'unknown'].includes(statusLower)) {
+      return 'warning';
+    }
+    
+    // 默认处理中状态（包括 ContainerCreating 等）
+    return 'processing';
   };
 
   const getPodStatusIcon = (status) => {
-    switch (status) {
-      case 'running': return <CheckCircleOutlined />;
-      case 'succeeded': return <CheckCircleOutlined />;
-      case 'completed': return <CheckCircleOutlined />;
-      case 'failed': return <ExclamationCircleOutlined />;
-      case 'error': return <ExclamationCircleOutlined />;
-      case 'imagepullbackoff': return <ExclamationCircleOutlined />;
-      case 'errimagepull': return <ExclamationCircleOutlined />;
-      case 'crashloopbackoff': return <ExclamationCircleOutlined />;
-      case 'not-ready': return <ExclamationCircleOutlined />;
-      case 'terminating': return <LoadingOutlined />;
-      default: return <LoadingOutlined />;
+    const statusLower = status?.toLowerCase() || '';
+    
+    // 成功状态
+    if (['running', 'succeeded', 'completed'].includes(statusLower)) {
+      return <CheckCircleOutlined />;
     }
+    
+    // 错误状态
+    if (['failed', 'error', 'imagepullbackoff', 'errimagepull', 
+         'crashloopbackoff', 'oomkilled'].includes(statusLower)) {
+      return <ExclamationCircleOutlined />;
+    }
+    
+    // 默认加载中图标
+    return <LoadingOutlined />;
   };
 
   // 计算Service关联的Pod数量
@@ -592,7 +601,7 @@ const StatusMonitorRedux = ({ activeTab }) => {
             color={getPodStatusColor(status)}
             icon={getPodStatusIcon(status)}
           >
-            {status.toUpperCase()}
+            {status}
           </Tag>
         );
       },

@@ -1,22 +1,26 @@
-algorithm_name=hyperpod-instantstart-ms-swift
+#!/bin/bash
+
+set -e
+
+algorithm_name=hypd-training-op-msswift-t28-2
+docker_filename=Dockerfile.torch.ms-swift
+img_version=v1219-5
 
 region=$(aws configure get region)
 account=$(aws sts get-caller-identity --query Account --output text)
 
-aws ecr get-login-password --region ${region}|docker login --username AWS --password-stdin "${account}.dkr.ecr.${region}.amazonaws.com"
-aws ecr get-login-password --region ${region}|docker login --username AWS --password-stdin "763104351884.dkr.ecr.${region}.amazonaws.com"
+aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin "${account}.dkr.ecr.${region}.amazonaws.com"
+aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin "763104351884.dkr.ecr.${region}.amazonaws.com"
 
-aws ecr describe-repositories --region $region --repository-names "${algorithm_name}" > /dev/null 2>&1
-if [ $? -ne 0 ]
-then
-echo "create repository:" "${algorithm_name}"
-aws ecr create-repository --region $region  --repository-name "${algorithm_name}" > /dev/null
-fi
+aws ecr describe-repositories --region $region --repository-names "${algorithm_name}" > /dev/null 2>&1 || {
+    echo "create repository:" "${algorithm_name}"
+    aws ecr create-repository --region $region  --repository-name "${algorithm_name}" > /dev/null
+}
 
-docker build -t ${algorithm_name} -f Dockerfile.ms-swift .
+docker build -t ${algorithm_name} -f ${docker_filename} .
 
-fullname="${account}.dkr.ecr.${region}.amazonaws.com/${algorithm_name}:latest"
+fullname="${account}.dkr.ecr.${region}.amazonaws.com/${algorithm_name}:${img_version}"
 docker tag ${algorithm_name} ${fullname}
 docker push ${fullname}
 
-echo $fullname
+echo "Successfully pushed: $fullname"

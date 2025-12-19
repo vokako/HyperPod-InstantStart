@@ -374,6 +374,7 @@ const MSSwiftRecipePanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes,
         </Row>
 
         {/* MLFlow配置 */}
+        {/* Temporarily hidden - SageMaker MLFlow ARN field
         <Form.Item
           label={
             <Space>
@@ -392,6 +393,7 @@ const MSSwiftRecipePanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes,
         >
           <Input placeholder="" />
         </Form.Item>
+        */}
 
         {/* 高级配置 */}
         <Collapse 
