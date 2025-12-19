@@ -359,13 +359,12 @@ const MSSwiftRecipePanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes,
               label={
                 <Space>
                   <CodeOutlined />
-                  <Text strong>MS-Swift Config YAML File Name</Text>
+                  <Text strong>MS-Swift Config File Name</Text>
                 </Space>
               }
               name="msswiftRecipeYamlFile"
               rules={[
-                { required: true, message: 'Please input YAML file name!' },
-                { pattern: /\.yaml$/, message: 'File must have .yaml extension' }
+                { required: true, message: 'Please input config file name!' }
               ]}
             >
               <Input placeholder="qwen06b_full_sft_template.yaml" />
