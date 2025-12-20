@@ -914,11 +914,8 @@ app.post('/api/deploy', async (req, res) => {
         memoryRequestYaml = `\n        memory: ${memoryRequest}Gi`;
       }
 
-      // 生成 HAMi webhook ignore label（如果 gpuMemory 是 -1）
-      // 注意：这个 label 需要添加到 CRD 的 metadata.labels
-      const hamiLabel = gpuMemory === -1
-        ? '\n  labels:\n    hami.io/webhook: ignore'
-        : '';
+      // HAMi label 不适用于 Managed Inference（CRD 不支持 Pod labels）
+      const hamiLabel = '';
 
       // 处理 KV Cache 配置
       let kvCacheSpecYaml = '';

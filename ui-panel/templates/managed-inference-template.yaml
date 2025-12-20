@@ -2,7 +2,7 @@ apiVersion: inference.sagemaker.aws.amazon.com/v1
 kind: InferenceEndpointConfig
 metadata:
   name: DEPLOYMENT_NAME
-  namespace: defaultHAMI_LABEL
+  namespace: default
 spec:
   modelName: MODEL_NAME
   invocationEndpoint: v1/chat/completions
@@ -27,8 +27,7 @@ INTELLIGENT_ROUTING_SPEC
     modelVolumeMount:
       name: model-weights
     resources:
-      requests:CPU_REQUEST
-        memory: MEMORY_REQUEST
+      requests:CPU_REQUESTMEMORY_REQUEST
         nvidia.com/gpu: "GPU_COUNT"GPU_MEMORY
       limits:
         nvidia.com/gpu: "GPU_COUNT"GPU_MEMORY
