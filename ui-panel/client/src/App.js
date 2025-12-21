@@ -1006,7 +1006,7 @@ function App() {
                       // 🎨 PREVIEW ONLY - Remove this tab to clean up preview
                       {
                         key: 'advanced-scaling-preview',
-                        label: 'Advanced Routing',
+                        label: 'SGL Routing',
                         children: (
                           <AdvancedScalingPanelV2
                             onDeploy={handleAdvancedScalingDeploy}

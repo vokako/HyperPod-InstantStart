@@ -356,36 +356,22 @@ const ManagedInferenceScalingPanel = () => {
               </Form.Item>
             </Col>
           </Row>
-
-          <Form.Item>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Button 
-                type="primary" 
-                htmlType="submit" 
-                icon={<RocketOutlined />} 
-                loading={loading}
-                block
-              >
-                Apply Scaler
-              </Button>
-              <Button 
-                icon={<CodeOutlined />} 
-                onClick={handlePreview}
-                size="small"
-                style={{ display: 'none' }}
-              >
-                Preview YAML
-              </Button>
-              <Button 
-                onClick={() => form.resetFields()}
-                style={{ display: 'none' }}
-              >
-                Reset
-              </Button>
-            </Space>
-          </Form.Item>
         </Form>
       </Card>
+
+      {/* 按钮移到 Card 外面 */}
+      <div style={{ marginTop: 16 }}>
+        <Button 
+          type="primary" 
+          icon={<RocketOutlined />} 
+          loading={loading}
+          size="large"
+          block
+          onClick={() => form.submit()}
+        >
+          Apply Scaler
+        </Button>
+      </div>
 
       <Modal
         title="KEDA ScaledObject YAML Preview"
