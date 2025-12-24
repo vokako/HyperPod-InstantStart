@@ -53,16 +53,33 @@ const TestPanel = ({ services, onRefresh }) => {
     const namespace = service.metadata?.namespace || 'default';
     const serviceName = service.metadata?.name || '';
     
-    // hyperpod-inference-system 的 routing service 特殊处理
-    const isHyperpodRouting = namespace === 'hyperpod-inference-system' && 
-                              serviceName.endsWith('-default-routing-service');
-    
     if (accessMode === 'loadbalancer') {
       // LoadBalancer 模式：只显示 LoadBalancer 类型的服务
       return service.spec?.type === 'LoadBalancer';
     } else {
-      // Port-Forward 模式：显示 ClusterIP 类型的服务 + hyperpod routing service
-      return service.spec?.type === 'ClusterIP' || isHyperpodRouting;
+      // Port-Forward 模式：使用黑白名单过滤 ClusterIP 服务
+      if (service.spec?.type !== 'ClusterIP') {
+        return false;
+      }
+      
+      // 黑名单：排除训练相关服务
+      const isTrainingService = serviceName.includes('ray') || 
+                                serviceName.includes('raycluster') ||
+                                serviceName.includes('head-svc');
+      if (isTrainingService) {
+        return false;
+      }
+      
+      // 白名单：推理引擎关键词
+      const inferenceEngines = ['vllm', 'sglang', 'ollama', 'sglgw', 'router'];
+      const hasInferenceEngine = inferenceEngines.some(engine => 
+        serviceName.toLowerCase().includes(engine)
+      );
+      
+      // 白名单：routing service
+      const isRoutingService = serviceName.endsWith('-routing-service');
+      
+      return hasInferenceEngine || isRoutingService;
     }
   });
 

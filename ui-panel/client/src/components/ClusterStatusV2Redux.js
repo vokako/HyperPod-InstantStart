@@ -16,7 +16,8 @@ import {
   Alert,
   Modal,
   Form,
-  Select
+  Select,
+  Typography
 } from 'antd';
 import {
   ReloadOutlined,
@@ -41,6 +42,8 @@ import {
 // 新的事件总线
 import resourceEventBus from '../utils/resourceEventBus';
 
+const { Text } = Typography;
+
 const ClusterStatusV2Redux = () => {
   const dispatch = useDispatch();
 
@@ -52,9 +55,8 @@ const ClusterStatusV2Redux = () => {
   const clusterStats = useSelector(selectCalculatedClusterStats);
   const lastUpdate = useSelector(selectClusterLastUpdate);
 
-  // HAMi Partition 状态
+  // HAMi 节点控制状态
   const [partitionModalVisible, setPartitionModalVisible] = useState(false);
-  const [partitionForm] = Form.useForm();
   const [applyLoading, setApplyLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -95,50 +97,47 @@ const ClusterStatusV2Redux = () => {
     }
   }, [dispatch]);
 
-  // HAMi Partition 处理函数
+  // HAMi 节点操作
   const handlePartitionClick = (node) => {
     setSelectedNode(node);
     setPartitionModalVisible(true);
-  };
+  }
 
-  const handlePartitionSubmit = async () => {
+  const handleEnableNode = async () => {
     try {
-      const values = await partitionForm.validateFields();
       setApplyLoading(true);
       
-      const response = await fetch('/api/cluster/hami/install', {
+      const response = await fetch('/api/cluster/hami/node/enable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...values,
           nodeName: selectedNode?.nodeName
         })
       });
       
       const result = await response.json();
       if (result.success) {
-        message.success('HAMi partition configured successfully');
+        message.success(`Node ${selectedNode.nodeName} enabled for HAMi`);
         setPartitionModalVisible(false);
         setSelectedNode(null);
-        partitionForm.resetFields();
       } else {
-        message.error(result.message || 'Failed to configure HAMi partition');
+        message.error(result.message || 'Failed to enable node');
       }
     } catch (error) {
-      console.error('HAMi partition error:', error);
-      message.error('Failed to configure HAMi partition');
+      console.error('HAMi node enable error:', error);
+      message.error('Failed to enable node');
     } finally {
       setApplyLoading(false);
     }
   };
 
-  const handleResetHAMi = async () => {
+  const handleDisableNode = async () => {
     if (!selectedNode) return;
     
     try {
       setResetLoading(true);
       
-      const response = await fetch('/api/cluster/hami/reset', {
+      const response = await fetch('/api/cluster/hami/node/disable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -148,20 +147,15 @@ const ClusterStatusV2Redux = () => {
       
       const result = await response.json();
       if (result.success) {
-        message.success(`Node ${selectedNode.nodeName} reset successfully`);
+        message.success(`Node ${selectedNode.nodeName} disabled for HAMi`);
         setPartitionModalVisible(false);
         setSelectedNode(null);
-        partitionForm.resetFields();
-        // 刷新集群状态
-        setTimeout(() => {
-          dispatch(refreshClusterData());
-        }, 3000);
       } else {
-        message.error(result.message || 'Failed to reset node');
+        message.error(result.message || 'Failed to disable node');
       }
     } catch (error) {
-      console.error('HAMi reset error:', error);
-      message.error('Failed to reset node');
+      console.error('HAMi node disable error:', error);
+      message.error('Failed to disable node');
     } finally {
       setResetLoading(false);
     }
@@ -211,11 +205,12 @@ const ClusterStatusV2Redux = () => {
 
         // HyperPod Karpenter节点 (优先判断)
         if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod' && isKarpenter) {
+          const capacityType = record.capacityType; // 从后端获取的 capacity type
           return (
             <div>
               <Tag color="#fa8c16">HyperPod Karpenter</Tag>
               <div style={{ fontSize: '11px', color: '#666', marginTop: 2 }}>
-                On-Demand
+                {capacityType === 'spot' ? 'Spot' : 'On-Demand'}
               </div>
             </div>
           );
@@ -532,9 +527,9 @@ const ClusterStatusV2Redux = () => {
           }}
         />
 
-        {/* HAMi Partition Modal */}
+        {/* HAMi Node Control Modal */}
         <Modal
-          title="Configure HAMi GPU Partition"
+          title="HAMi GPU Node Control"
           open={partitionModalVisible}
           centered
           onCancel={() => {
@@ -543,12 +538,12 @@ const ClusterStatusV2Redux = () => {
           }}
           footer={[
             <Button 
-              key="reset" 
+              key="disable" 
               danger
-              onClick={handleResetHAMi}
+              onClick={handleDisableNode}
               loading={resetLoading}
             >
-              Reset
+              Disable
             </Button>,
             <Button 
               key="cancel" 
@@ -560,67 +555,39 @@ const ClusterStatusV2Redux = () => {
               Cancel
             </Button>,
             <Button 
-              key="submit" 
+              key="enable" 
               type="primary" 
-              onClick={handlePartitionSubmit}
+              onClick={handleEnableNode}
               loading={applyLoading}
             >
-              Apply
+              Enable
             </Button>
           ]}
           width={500}
         >
-          <Form form={partitionForm} layout="vertical">
-            <Form.Item label="Node Name">
-              <span style={{ 
-                color: '#8c8c8c', 
-                fontFamily: 'monospace',
-                fontSize: '13px'
-              }}>
-                {selectedNode?.nodeName || '-'}
-              </span>
-            </Form.Item>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>
+              <Text strong>Node Name:</Text>
+            </div>
+            <Text code style={{ fontSize: '13px' }}>
+              {selectedNode?.nodeName || '-'}
+            </Text>
+          </div>
 
-            <Form.Item 
-              name="splitCount" 
-              label="Max Split Count"
-              initialValue={10}
-              rules={[{ required: true, message: 'Please select split count' }]}
-              tooltip="Number of virtual GPUs per physical GPU"
-            >
-              <Select>
-                {[2,3,4,5,6,7,8,9,10].map(n => (
-                  <Select.Option key={n} value={n}>{n}</Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-
-            <Form.Item 
-              name="nodePolicy" 
-              label="Node Scheduler Policy"
-              initialValue="binpack"
-              rules={[{ required: true, message: 'Please select node policy' }]}
-              tooltip="How to distribute pods across nodes"
-            >
-              <Select>
-                <Select.Option value="binpack">binpack (Consolidate)</Select.Option>
-                <Select.Option value="spread">spread (Distribute)</Select.Option>
-              </Select>
-            </Form.Item>
-
-            <Form.Item 
-              name="gpuPolicy" 
-              label="GPU Scheduler Policy"
-              initialValue="spread"
-              rules={[{ required: true, message: 'Please select GPU policy' }]}
-              tooltip="How to allocate GPUs within a node"
-            >
-              <Select>
-                <Select.Option value="binpack">binpack (Consolidate)</Select.Option>
-                <Select.Option value="spread">spread (Distribute)</Select.Option>
-              </Select>
-            </Form.Item>
-          </Form>
+          <Alert
+            message="Node Control"
+            description={
+              <div>
+                <p><strong>Enable:</strong> Add label <code>gpu=on</code> to enable HAMi GPU virtualization on this node.</p>
+                <p><strong>Disable:</strong> Remove label and clean up device plugin pods.</p>
+                <p style={{ marginTop: 8, marginBottom: 0 }}>
+                  <Text type="secondary">Note: HAMi must be installed globally first (via Advanced Features).</Text>
+                </p>
+              </div>
+            }
+            type="info"
+            showIcon
+          />
         </Modal>
 
         <style jsx>{`

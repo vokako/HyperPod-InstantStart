@@ -9535,26 +9535,28 @@ console.log('HyperPod Karpenter Management APIs loaded');
 const HAMiManager = require('./utils/hamiManager');
 
 // 安装/更新 HAMi
+// HAMi GPU Virtualization APIs
+// ================================
+
+// 全局安装/配置 HAMi（幂等操作）
 app.post('/api/cluster/hami/install', async (req, res) => {
   try {
-    const { splitCount, nodePolicy, gpuPolicy, nodeName } = req.body;
+    const { splitCount, nodePolicy, gpuPolicy } = req.body;
     const activeCluster = clusterManager.getActiveCluster();
 
-    console.log(`Installing HAMi for cluster: ${activeCluster}`);
+    console.log(`Installing/Configuring HAMi for cluster: ${activeCluster}`);
 
     const result = await HAMiManager.installHAMi({
       splitCount,
       nodePolicy,
-      gpuPolicy,
-      nodeName
+      gpuPolicy
     });
 
     // 保存配置到 metadata
     HAMiManager.saveConfig(activeCluster, {
       splitCount,
       nodePolicy,
-      gpuPolicy,
-      nodeName
+      gpuPolicy
     }, clusterManager);
 
     res.json(result);
@@ -9567,16 +9569,88 @@ app.post('/api/cluster/hami/install', async (req, res) => {
   }
 });
 
+// 卸载 HAMi
+app.delete('/api/cluster/hami/uninstall', async (req, res) => {
+  try {
+    const activeCluster = clusterManager.getActiveCluster();
+    console.log(`Uninstalling HAMi for cluster: ${activeCluster}`);
+
+    const result = await HAMiManager.uninstallHAMi();
+
+    // 清除 metadata
+    HAMiManager.clearConfig(activeCluster, clusterManager);
+
+    res.json(result);
+  } catch (error) {
+    console.error('HAMi uninstallation error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 // 检查 HAMi 状态
 app.get('/api/cluster/hami/status', async (req, res) => {
   try {
-    const status = HAMiManager.checkStatus();
+    const activeCluster = clusterManager.getActiveCluster();
+    const status = await HAMiManager.checkStatus(activeCluster, clusterManager);
     res.json(status);
   } catch (error) {
     console.error('HAMi status check error:', error);
     res.status(500).json({ 
       installed: false, 
       error: error.message 
+    });
+  }
+});
+
+// 启用节点（打标签）
+app.post('/api/cluster/hami/node/enable', async (req, res) => {
+  try {
+    const { nodeName } = req.body;
+    
+    if (!nodeName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Node name is required'
+      });
+    }
+
+    console.log(`Enabling HAMi for node: ${nodeName}`);
+    const result = await HAMiManager.enableNode(nodeName);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('HAMi node enable error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// 禁用节点（删除标签 + 清理 pods）
+app.post('/api/cluster/hami/node/disable', async (req, res) => {
+  try {
+    const { nodeName } = req.body;
+    
+    if (!nodeName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Node name is required'
+      });
+    }
+
+    console.log(`Disabling HAMi for node: ${nodeName}`);
+    const result = await HAMiManager.disableNode(nodeName);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('HAMi node disable error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -9593,31 +9667,6 @@ app.get('/api/cluster/amp-workspace', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error.message 
-    });
-  }
-});
-
-// 重置节点的 HAMi 配置
-app.post('/api/cluster/hami/reset', async (req, res) => {
-  try {
-    const { nodeName } = req.body;
-    
-    if (!nodeName) {
-      return res.status(400).json({
-        success: false,
-        message: 'Node name is required'
-      });
-    }
-
-    console.log(`Resetting HAMi for node: ${nodeName}`);
-    const result = await HAMiManager.resetNodeHAMi(nodeName);
-    
-    res.json(result);
-  } catch (error) {
-    console.error('HAMi reset error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
     });
   }
 });

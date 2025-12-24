@@ -67,6 +67,9 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
   const [advancedFeaturesLoading, setAdvancedFeaturesLoading] = useState(false);
   const [advancedFeaturesUpdating, setAdvancedFeaturesUpdating] = useState(false);
 
+  // HAMi 状态（用于显示当前安装状态）
+  const [hamiStatus, setHamiStatus] = useState(null);
+
 
   // Karpenter 相关状态
   const [karpenterStatus, setKarpenterStatus] = useState(null);
@@ -940,12 +943,22 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       const result = await dispatch(fetchAdvancedFeatures()).unwrap();
       setAdvancedFeaturesData(result.advancedFeatures);
       
+      // 获取 HAMi 状态
+      const hamiResponse = await fetch('/api/cluster/hami/status');
+      const hamiData = await hamiResponse.json();
+      setHamiStatus(hamiData);
+      
       // 设置表单初始值
       advancedFeaturesForm.setFieldsValue({
         tieredStorageEnabled: result.advancedFeatures.tieredStorage.enabled,
         tieredStorageMode: result.advancedFeatures.tieredStorage.configMode,
         tieredStoragePercentage: result.advancedFeatures.tieredStorage.percentage || 50,
-        inferenceOperatorEnabled: result.advancedFeatures.inferenceOperator.enabled
+        inferenceOperatorEnabled: result.advancedFeatures.inferenceOperator.enabled,
+        // HAMi 配置
+        hamiEnabled: hamiData.installed || false,
+        hamiSplitCount: hamiData.config?.splitCount || 10,
+        hamiNodePolicy: hamiData.config?.nodePolicy || 'binpack',
+        hamiGpuPolicy: hamiData.config?.gpuPolicy || 'spread'
       });
     } catch (error) {
       console.error('Error fetching advanced features:', error);
@@ -975,6 +988,61 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       updates.inferenceOperator = {
         enabled: values.inferenceOperatorEnabled
       };
+
+      // HAMi GPU Virtualization
+      const currentHamiEnabled = hamiStatus?.installed || false;
+      const newHamiEnabled = values.hamiEnabled || false;
+
+      // 处理 HAMi 安装/卸载/更新
+      if (newHamiEnabled && !currentHamiEnabled) {
+        // 安装 HAMi
+        const hamiResponse = await fetch('/api/cluster/hami/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            splitCount: values.hamiSplitCount,
+            nodePolicy: values.hamiNodePolicy,
+            gpuPolicy: values.hamiGpuPolicy
+          })
+        });
+        const hamiResult = await hamiResponse.json();
+        if (!hamiResult.success) {
+          throw new Error(hamiResult.message || 'Failed to install HAMi');
+        }
+      } else if (newHamiEnabled && currentHamiEnabled) {
+        // 更新 HAMi 配置
+        const hamiResponse = await fetch('/api/cluster/hami/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            splitCount: values.hamiSplitCount,
+            nodePolicy: values.hamiNodePolicy,
+            gpuPolicy: values.hamiGpuPolicy
+          })
+        });
+        const hamiResult = await hamiResponse.json();
+        if (!hamiResult.success) {
+          throw new Error(hamiResult.message || 'Failed to update HAMi');
+        }
+      } else if (!newHamiEnabled && currentHamiEnabled) {
+        // 卸载 HAMi
+        const hamiResponse = await fetch('/api/cluster/hami/uninstall', {
+          method: 'DELETE'
+        });
+        const hamiResult = await hamiResponse.json();
+        if (!hamiResult.success) {
+          throw new Error(hamiResult.message || 'Failed to uninstall HAMi');
+        }
+      }
+
+      // 刷新 HAMi 状态
+      try {
+        const statusResponse = await fetch('/api/cluster/hami/status');
+        const statusData = await statusResponse.json();
+        setHamiStatus(statusData);
+      } catch (error) {
+        console.error('Failed to refresh HAMi status:', error);
+      }
 
       await dispatch(updateAdvancedFeatures(updates)).unwrap();
       
@@ -2117,6 +2185,79 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       >
         <Spin spinning={advancedFeaturesLoading}>
           <Form form={advancedFeaturesForm} layout="vertical">
+            {/* HAMi GPU Virtualization Section */}
+            <Card 
+              size="small" 
+              style={{ marginBottom: 16, backgroundColor: '#fafafa' }}
+            >
+              <Form.Item 
+                name="hamiEnabled" 
+                valuePropName="checked"
+                style={{ marginBottom: 12 }}
+              >
+                <Checkbox>
+                  <Text strong>HAMi GPU Virtualization</Text>
+                </Checkbox>
+              </Form.Item>
+
+              <Form.Item noStyle shouldUpdate={(prev, curr) => prev.hamiEnabled !== curr.hamiEnabled}>
+                {({ getFieldValue }) => 
+                  getFieldValue('hamiEnabled') ? (
+                    <>
+                      <Alert
+                        message="HAMi enables GPU virtualization, allowing multiple workloads to share a single physical GPU."
+                        type="info"
+                        showIcon
+                        style={{ marginBottom: 12 }}
+                      />
+
+                      <Form.Item 
+                        name="hamiSplitCount" 
+                        label="Max Split Count"
+                        rules={[{ required: true, message: 'Please select split count' }]}
+                        tooltip="Number of virtual GPUs per physical GPU"
+                      >
+                        <Select>
+                          {[2,3,4,5,6,7,8,9,10].map(n => (
+                            <Select.Option key={n} value={n}>{n}</Select.Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item 
+                            name="hamiNodePolicy" 
+                            label="Node Scheduler Policy"
+                            rules={[{ required: true, message: 'Please select node policy' }]}
+                            tooltip="How to distribute pods across nodes"
+                          >
+                            <Select>
+                              <Select.Option value="binpack">binpack (Consolidate)</Select.Option>
+                              <Select.Option value="spread">spread (Distribute)</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item 
+                            name="hamiGpuPolicy" 
+                            label="GPU Scheduler Policy"
+                            rules={[{ required: true, message: 'Please select GPU policy' }]}
+                            tooltip="How to allocate GPUs within a node"
+                          >
+                            <Select>
+                              <Select.Option value="binpack">binpack (Consolidate)</Select.Option>
+                              <Select.Option value="spread">spread (Distribute)</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </>
+                  ) : null
+                }
+              </Form.Item>
+            </Card>
+
             {/* Tiered Storage Section */}
             <Card 
               size="small" 

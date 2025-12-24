@@ -360,17 +360,8 @@ const ManagedInferenceScalingPanel = () => {
             />
           ) : (
             <Alert
-              message="Prometheus Not Found"
-              description={
-                <div style={{ fontSize: '12px' }}>
-                  <strong>Install HyperPod Observability first:</strong>
-                  <br />
-                  Go to SageMaker Console → HyperPod → Your Cluster → Advanced Capabilities → Install Observability
-                  <br />
-                  <br />
-                  Or manually enter your Prometheus endpoint below.
-                </div>
-              }
+              message="Amazon Managed Prometheus NOT Found"
+              description="Use HyperPod Console to install."
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}

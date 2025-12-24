@@ -695,25 +695,25 @@ class KarpenterManager {
         this.log(logFile, `Prometheus installation: ${error.message} (may already exist)`);
       }
 
-      // 安装KEDA
-      this.log(logFile, 'Installing KEDA...');
-      try {
-        const kedaCmd = `helm repo add kedacore https://kedacore.github.io/charts && \\
-          helm repo update && \\
-          helm install keda kedacore/keda \\
-            --namespace keda \\
-            --create-namespace`;
+      // // 安装KEDA
+      // this.log(logFile, 'Installing KEDA...');
+      // try {
+      //   const kedaCmd = `helm repo add kedacore https://kedacore.github.io/charts && \\
+      //     helm repo update && \\
+      //     helm install keda kedacore/keda \\
+      //       --namespace keda \\
+      //       --create-namespace`;
 
-        execSync(kedaCmd, { encoding: 'utf8', timeout: 300000 });
-        this.log(logFile, 'KEDA installed successfully');
+      //   execSync(kedaCmd, { encoding: 'utf8', timeout: 300000 });
+      //   this.log(logFile, 'KEDA installed successfully');
 
-        // 等待KEDA就绪
-        const kedaWaitCmd = 'kubectl wait --for=condition=ready pod --all -n keda --timeout=120s';
-        execSync(kedaWaitCmd, { encoding: 'utf8', timeout: 150000 });
-        this.log(logFile, 'KEDA pods are ready');
-      } catch (error) {
-        this.log(logFile, `KEDA installation: ${error.message} (may already exist)`);
-      }
+      //   // 等待KEDA就绪
+      //   const kedaWaitCmd = 'kubectl wait --for=condition=ready pod --all -n keda --timeout=120s';
+      //   execSync(kedaWaitCmd, { encoding: 'utf8', timeout: 150000 });
+      //   this.log(logFile, 'KEDA pods are ready');
+      // } catch (error) {
+      //   this.log(logFile, `KEDA installation: ${error.message} (may already exist)`);
+      // }
 
     } catch (error) {
       this.log(logFile, `Error installing monitoring components: ${error.message}`);
