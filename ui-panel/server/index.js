@@ -9690,20 +9690,25 @@ app.post('/api/cluster/hyperpod/node/reboot', async (req, res) => {
       });
     }
 
-    const clusterArn = clusterInfo.hyperPodCluster.ClusterArn;
-    const region = await AWSHelpers.getCurrentRegion();
+    // 使用 kubectl 标签方式触发 reboot
+    // 参考: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-hyperpod-eks-resiliency-manual.html
+    const cmd = `kubectl label nodes ${nodeId} sagemaker.amazonaws.com/node-health-status=UnschedulablePendingReboot --overwrite`;
 
-    // 提取实际的 EC2 实例 ID（去掉 hyperpod- 前缀）
-    const instanceId = nodeId.replace(/^hyperpod-/, '');
 
-    // 执行 reboot 命令（node-ids 需要 JSON 数组格式）
-    const cmd = `aws sagemaker batch-reboot-cluster-nodes \
-      --cluster-name "${clusterArn}" \
-      --node-ids '["${instanceId}"]' \
-      --region ${region}`;
+    // const clusterArn = clusterInfo.hyperPodCluster.ClusterArn;
+    // const region = await AWSHelpers.getCurrentRegion();
+
+    // // 提取实际的 EC2 实例 ID（去掉 hyperpod- 前缀）
+    // const instanceId = nodeId.replace(/^hyperpod-/, '');
+
+    // // 执行 reboot 命令（node-ids 需要 JSON 数组格式）
+    // const cmd = `aws sagemaker batch-reboot-cluster-nodes \
+    //   --cluster-name "${clusterArn}" \
+    //   --node-ids '["${instanceId}"]' \
+    //   --region ${region}`;
 
     const result = execSync(cmd, { encoding: 'utf8' });
-    console.log('Reboot result:', result);
+    console.log('Reboot label result:', result);
 
     // 广播 WebSocket 消息
     broadcast({
@@ -9758,21 +9763,24 @@ app.post('/api/cluster/hyperpod/node/replace', async (req, res) => {
         message: 'No HyperPod cluster found'
       });
     }
+    // 使用 kubectl 标签方式触发 replace
+    // 参考: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-hyperpod-eks-resiliency-manual.html
+    const cmd = `kubectl label nodes ${nodeId} sagemaker.amazonaws.com/node-health-status=UnschedulablePendingReplacement --overwrite`;
 
-    const clusterArn = clusterInfo.hyperPodCluster.ClusterArn;
-    const region = await AWSHelpers.getCurrentRegion();
+    // const clusterArn = clusterInfo.hyperPodCluster.ClusterArn;
+    // const region = await AWSHelpers.getCurrentRegion();
 
-    // 提取实际的 EC2 实例 ID（去掉 hyperpod- 前缀）
-    const instanceId = nodeId.replace(/^hyperpod-/, '');
+    // // 提取实际的 EC2 实例 ID（去掉 hyperpod- 前缀）
+    // const instanceId = nodeId.replace(/^hyperpod-/, '');
 
-    // 执行 replace 命令（node-ids 需要 JSON 数组格式）
-    const cmd = `aws sagemaker batch-replace-cluster-nodes \
-      --cluster-name "${clusterArn}" \
-      --node-ids '["${instanceId}"]' \
-      --region ${region}`;
+    // // 执行 replace 命令（node-ids 需要 JSON 数组格式）
+    // const cmd = `aws sagemaker batch-replace-cluster-nodes \
+    //   --cluster-name "${clusterArn}" \
+    //   --node-ids '["${instanceId}"]' \
+    //   --region ${region}`;
 
     const result = execSync(cmd, { encoding: 'utf8' });
-    console.log('Replace result:', result);
+    console.log('Replace label result:', result);
 
     // 广播 WebSocket 消息
     broadcast({
