@@ -83,9 +83,9 @@ const StatusMonitor = ({ pods, services, businessServices: propBusinessServices,
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
-        message.success(`Service ${serviceName} deleted successfully`);
+        // 通知由 WebSocket 统一处理，避免重复弹窗
         // 触发刷新
         if (onRefresh) {
           await onRefresh();
@@ -142,7 +142,7 @@ const StatusMonitor = ({ pods, services, businessServices: propBusinessServices,
       const result = await response.json();
 
       if (result.success) {
-        message.success(`Pod ${podName} assigned to ${businessTag}`);
+        // 通知由 WebSocket 统一处理，避免重复弹窗
         // 触发操作刷新
         operationRefreshManager.triggerOperationRefresh('pod-assign', {
           podName,

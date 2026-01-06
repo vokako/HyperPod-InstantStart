@@ -2445,15 +2445,15 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           </div>
 
           <Form.Item
-            name="subnetId"
-            label="Subnet"
-            rules={[{ required: true, message: 'Please select subnet' }]}
-            extra="Select the subnet for this instance group"
+            name="availabilityZone"
+            label="Availability Zone"
+            rules={[{ required: true, message: 'Please select availability zone' }]}
+            extra="Select AZ - subnet will be automatically detected or created"
           >
-            <Select placeholder="Select subnet" loading={!subnets.privateSubnets.length}>
-              {subnets.privateSubnets.map(subnet => (
-                <Select.Option key={subnet.subnetId} value={subnet.subnetId}>
-                  {subnet.name} ({subnet.isHyperPodSubnet ? 'HyperPod' : 'Private'}) - {subnet.availabilityZone} - {subnet.cidrBlock}
+            <Select placeholder="Select availability zone" loading={!availabilityZones.length}>
+              {availabilityZones.map(az => (
+                <Select.Option key={az.ZoneName} value={az.ZoneName}>
+                  {az.ZoneName} ({az.ZoneId})
                 </Select.Option>
               ))}
             </Select>

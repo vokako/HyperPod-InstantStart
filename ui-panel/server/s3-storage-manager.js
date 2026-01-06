@@ -12,6 +12,170 @@ class S3StorageManager {
     this.managedClustersPath = path.join(__dirname, '../managed_clusters_info');
   }
 
+  // ==================== Default Configuration ====================
+
+  /**
+   * 获取 S3 存储默认配置
+   * 从容器元数据或环境变量中读取默认 bucket 信息
+   * @returns {Object} { success, defaults: { name, bucketName, region } }
+   */
+  getStorageDefaults() {
+    try {
+      let defaultBucket = '';
+
+      // 从容器中的 /s3-workspace-metadata 路径读取默认bucket
+      try {
+        const metadataPath = '/s3-workspace-metadata';
+        const bucketInfoPath = path.join(metadataPath, 'CURRENT_BUCKET_INFO');
+
+        if (fs.existsSync(bucketInfoPath)) {
+          const bucketInfoContent = fs.readFileSync(bucketInfoPath, 'utf8');
+          const bucketInfo = JSON.parse(bucketInfoContent);
+          defaultBucket = bucketInfo.bucketName;
+          console.log('Successfully read bucket info from CURRENT_BUCKET_INFO:', bucketInfo.bucketName);
+        } else {
+          console.log('CURRENT_BUCKET_INFO file not found at:', bucketInfoPath);
+        }
+      } catch (error) {
+        console.log('Could not read s3-workspace-metadata:', error.message);
+      }
+
+      return {
+        success: true,
+        defaults: {
+          name: 's3-claim',
+          bucketName: defaultBucket,
+          region: 'us-west-2'
+        }
+      };
+    } catch (error) {
+      console.error('Error getting S3 storage defaults:', error);
+      return {
+        success: false,
+        error: error.message,
+        defaults: {
+          name: 's3-claim',
+          bucketName: '',
+          region: 'us-west-2'
+        }
+      };
+    }
+  }
+
+  // ==================== S3 Content Listing ====================
+
+  /**
+   * 列出 S3 存储内容
+   * @param {string} storageName - PVC 名称（可选，默认使用 s3-claim 或第一个存储）
+   * @returns {Object} { success, data: [], bucketInfo: {} }
+   */
+  async listStorageContent(storageName = null) {
+    try {
+      console.log(`📦 Fetching S3 storage content for: ${storageName || 'default'}`);
+
+      // 获取存储配置
+      const storageResult = await this.getStorages();
+      if (!storageResult.success) {
+        return { success: false, error: 'Failed to get storage configurations' };
+      }
+
+      // 找到对应的存储配置
+      const selectedStorage = storageResult.storages.find(s => s.pvcName === storageName) ||
+                             storageResult.storages.find(s => s.pvcName === 's3-claim') ||
+                             storageResult.storages[0];
+
+      if (!selectedStorage) {
+        return {
+          success: true,
+          data: [],
+          bucketInfo: { bucket: 'No storage configured', region: 'Unknown' }
+        };
+      }
+
+      console.log(`📦 Using storage: ${selectedStorage.name} -> ${selectedStorage.bucketName}`);
+
+      // 使用AWS CLI获取S3内容
+      const s3Data = await this._listS3Contents(selectedStorage.bucketName, selectedStorage.region || 'us-west-2');
+
+      console.log(`📊 Found ${s3Data.length} items in S3`);
+
+      return {
+        success: true,
+        data: s3Data,
+        bucketInfo: {
+          bucket: selectedStorage.bucketName,
+          region: selectedStorage.region || 'Unknown',
+          pvcName: selectedStorage.pvcName
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ Error fetching S3 storage:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * 列出 S3 bucket 内容（内部方法）
+   * @private
+   */
+  async _listS3Contents(bucketName, region) {
+    const awsCommand = `aws s3 ls s3://${bucketName}/ --region ${region}`;
+    console.log(`🔍 Executing: ${awsCommand}`);
+
+    try {
+      const { stdout, stderr } = await execAsync(awsCommand);
+
+      if (stderr) {
+        console.warn('AWS CLI stderr:', stderr);
+      }
+
+      const s3Data = [];
+
+      if (stdout) {
+        const lines = stdout.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          if (trimmed.startsWith('PRE ')) {
+            // 文件夹格式: "PRE folder-name/"
+            const folderName = trimmed.substring(4); // 去掉 "PRE "
+            s3Data.push({
+              key: folderName,
+              type: 'folder',
+              size: null,
+              lastModified: new Date().toISOString()
+            });
+          } else {
+            // 文件格式: "2025-08-15 09:18:57 0 filename"
+            const parts = trimmed.split(/\s+/);
+            if (parts.length >= 4) {
+              const date = parts[0];
+              const time = parts[1];
+              const size = parts[2];
+              const name = parts.slice(3).join(' ');
+
+              s3Data.push({
+                key: name,
+                type: 'file',
+                size: parseInt(size) || 0,
+                lastModified: new Date(`${date} ${time}`).toISOString(),
+                storageClass: 'STANDARD'
+              });
+            }
+          }
+        }
+      }
+
+      return s3Data;
+    } catch (awsError) {
+      console.error('AWS CLI error:', awsError);
+      throw new Error(`Failed to list S3 contents: ${awsError.message}`);
+    }
+  }
+
   // 获取当前活跃集群的S3配置路径
   getActiveClusterStorageConfigPath() {
     try {
@@ -356,18 +520,18 @@ class S3StorageManager {
   // 生成增强的模型下载Job
   async generateEnhancedDownloadJob(config) {
     try {
-      const { modelId, resources, s3Storage, hfToken } = config;
-      
+      const { modelId, resources, s3Storage, hfToken, instanceType } = config;
+
       // 生成短的模型标签，限制长度
       let modelTag = modelId.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
       if (modelTag.length > 20) {
         modelTag = modelTag.substring(0, 20);
       }
-      
+
       // 生成短的时间戳
       const timestamp = Date.now().toString().slice(-8); // 只取最后8位
       const jobName = `model-dl-${modelTag}-${timestamp}`;
-      
+
       // 确保名称不超过63字符
       const finalJobName = jobName.length > 63 ? jobName.substring(0, 63) : jobName;
 
@@ -379,11 +543,21 @@ class S3StorageManager {
       yamlContent = yamlContent
         .replace(/MODEL_TAG/g, finalJobName)
         .replace(/HF_MODEL_ID/g, modelId)
-        .replace(/CPU_REQUEST/g, resources.cpu.toString())
-        .replace(/CPU_LIMIT/g, resources.cpu.toString())
-        .replace(/MEMORY_REQUEST/g, `${resources.memory}Gi`)
-        .replace(/MEMORY_LIMIT/g, `${resources.memory}Gi`)
         .replace(/S3_PVC_NAME/g, s3Storage);
+
+      // 处理资源限制 (-1 表示不指定)
+      if (resources.cpu === -1 && resources.memory === -1) {
+        yamlContent = yamlContent.replace(
+          /          resources:\n            requests:\n              cpu: "CPU_REQUEST"\n              memory: MEMORY_REQUEST\n            limits:\n              cpu: "CPU_LIMIT"\n              memory: MEMORY_LIMIT\n/,
+          ''
+        );
+      } else {
+        yamlContent = yamlContent
+          .replace(/CPU_REQUEST/g, resources.cpu.toString())
+          .replace(/CPU_LIMIT/g, resources.cpu.toString())
+          .replace(/MEMORY_REQUEST/g, `${resources.memory}Gi`)
+          .replace(/MEMORY_LIMIT/g, `${resources.memory}Gi`);
+      }
 
       // 处理HF Token
       if (hfToken) {
@@ -395,11 +569,34 @@ class S3StorageManager {
         yamlContent = yamlContent.replace('env:HF_TOKEN_ENV', 'env:');
       }
 
+      // 处理 nodeSelector (instanceType)
+      if (instanceType) {
+        yamlContent = yamlContent.replace(
+          /# nodeSelector:\n      #   sagemaker\.amazonaws\.com\/compute-type: hyperpod/,
+          `nodeSelector:\n        node.kubernetes.io/instance-type: ${instanceType}`
+        );
+      }
+
       return { success: true, yamlContent, jobName: finalJobName };
     } catch (error) {
       console.error('Error generating enhanced download job:', error);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * 生成模型标签（用于 Kubernetes 资源命名）
+   * 将模型 ID 转换为符合 Kubernetes 命名规范的标签
+   * @param {string} modelId - 模型 ID（如 "meta-llama/Llama-3.1-8B"）
+   * @returns {string} 符合 K8s 命名规范的标签
+   */
+  static generateModelTag(modelId) {
+    if (!modelId) return 'model';
+    return modelId
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '') || 'model';
   }
 }
 

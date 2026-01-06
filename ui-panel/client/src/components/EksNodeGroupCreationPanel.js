@@ -9,50 +9,52 @@ const EksNodeGroupCreationPanel = ({ onCreated }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [clusterInfo, setClusterInfo] = useState(null);
-  const [subnets, setSubnets] = useState({ publicSubnets: [], privateSubnets: [], hyperPodSubnets: [] });
-  const [hyperPodGroups, setHyperPodGroups] = useState([]);
   const [eksSecurityGroup, setEksSecurityGroup] = useState(null);
+  const [availabilityZones, setAvailabilityZones] = useState([]);
+  const [azLoading, setAzLoading] = useState(false);
 
   useEffect(() => {
-    fetchSubnetInfo();
-    fetchHyperPodInfo();
+    fetchClusterInfo();
   }, []);
 
-  const fetchSubnetInfo = async () => {
+  useEffect(() => {
+    if (clusterInfo?.region) {
+      fetchAvailabilityZones(clusterInfo.region);
+    }
+  }, [clusterInfo?.region]);
+
+  const fetchClusterInfo = async () => {
     try {
       const response = await fetch('/api/cluster/subnets');
       const result = await response.json();
-      
+
       if (result.success) {
         setClusterInfo({
           eksClusterName: result.data.eksClusterName,
           region: result.data.region,
           vpcId: result.data.vpcId
         });
-        setSubnets({
-          publicSubnets: result.data.publicSubnets || [],
-          privateSubnets: result.data.privateSubnets || [],
-          hyperPodSubnets: result.data.hyperPodSubnets || []
-        });
         setEksSecurityGroup(result.data.securityGroupId);
       } else {
-        message.error(`Failed to fetch subnet info: ${result.error}`);
+        message.error(`Failed to fetch cluster info: ${result.error}`);
       }
     } catch (error) {
-      message.error(`Error fetching subnet info: ${error.message}`);
+      message.error(`Error fetching cluster info: ${error.message}`);
     }
   };
 
-  const fetchHyperPodInfo = async () => {
+  const fetchAvailabilityZones = async (region) => {
+    setAzLoading(true);
     try {
-      const response = await fetch('/api/cluster/nodegroups');
+      const response = await fetch(`/api/cluster/availability-zones?region=${region}`);
       const result = await response.json();
-      
       if (result.success) {
-        setHyperPodGroups(result.hyperPodInstanceGroups || []);
+        setAvailabilityZones(result.zones || []);
       }
     } catch (error) {
-      console.error('Error fetching HyperPod info:', error);
+      console.error('Error fetching availability zones:', error);
+    } finally {
+      setAzLoading(false);
     }
   };
 
@@ -88,26 +90,6 @@ const EksNodeGroupCreationPanel = ({ onCreated }) => {
       setLoading(false);
     }
   };
-
-  // 开关：是否只显示 HyperPod 使用的子网
-  const ONLY_SHOW_HYPERPOD_SUBNETS = false;
-
-  // 获取可用子网
-  const getAvailableSubnets = () => {
-    if (ONLY_SHOW_HYPERPOD_SUBNETS) {
-      // 只显示 HyperPod 使用的私有子网
-      const hyperPodPrivateSubnets = subnets.privateSubnets.filter(s => s.isHyperPodSubnet);
-      return hyperPodPrivateSubnets.map(s => ({ ...s, type: 'Private (HyperPod)' }));
-    } else {
-      // 显示所有私有子网
-      return subnets.privateSubnets.map(s => ({
-        ...s,
-        type: s.isHyperPodSubnet ? 'Private (HyperPod)' : 'Private'
-      }));
-    }
-  };
-
-  const availableSubnets = getAvailableSubnets();
 
   // GPU实例类型选项（不带ml.前缀，与HyperPod选项对应）
   const gpuInstanceTypes = [
@@ -156,6 +138,20 @@ const EksNodeGroupCreationPanel = ({ onCreated }) => {
         </Form.Item>
 
         <Form.Item
+          name="availabilityZone"
+          label="Availability Zone"
+          rules={[{ required: true, message: 'Please select availability zone!' }]}
+        >
+          <Select placeholder="Select availability zone" loading={azLoading}>
+            {availabilityZones.map(az => (
+              <Option key={az.ZoneName} value={az.ZoneName}>
+                {az.ZoneName} ({az.ZoneId})
+              </Option>
+            ))}
+          </Select>
+        </Form.Item>
+
+        <Form.Item
           name="instanceType"
           label="Instance Type"
           rules={[{ required: true, message: 'Please select or input instance type!' }]}
@@ -167,27 +163,6 @@ const EksNodeGroupCreationPanel = ({ onCreated }) => {
               option.value.toLowerCase().indexOf(inputValue.toLowerCase()) !== -1
             }
           />
-        </Form.Item>
-
-        <Form.Item
-          name="subnetId"
-          label="Subnet"
-          rules={[{ required: true, message: 'Please select subnet!' }]}
-          extra={
-            availableSubnets.length === 0 
-              ? "Note: No private subnets available" 
-              : ONLY_SHOW_HYPERPOD_SUBNETS 
-                ? "Select HyperPod private subnet" 
-                : "Select private subnet (HyperPod subnets are marked)"
-          }
-        >
-          <Select placeholder="Select subnet">
-            {availableSubnets.map(subnet => (
-              <Option key={subnet.subnetId} value={subnet.subnetId}>
-                {subnet.name} ({subnet.type}) - {subnet.availabilityZone} - {subnet.cidrBlock}
-              </Option>
-            ))}
-          </Select>
         </Form.Item>
 
         <Space style={{ width: '100%' }}>
@@ -226,6 +201,14 @@ const EksNodeGroupCreationPanel = ({ onCreated }) => {
 
         <Form.Item name="useSpotInstances" label="Use Spot Instances" valuePropName="checked">
           <Switch />
+        </Form.Item>
+
+        <Form.Item
+          name="capacityReservationId"
+          label="Capacity Reservation ID (Optional)"
+          extra="For Capacity Block instances. If provided, Spot option will be ignored."
+        >
+          <Input placeholder="cr-0123456789abcdef0" />
         </Form.Item>
 
         <Form.Item>

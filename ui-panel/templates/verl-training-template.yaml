@@ -8,6 +8,12 @@ spec:
   # backoffLimit: 0
   shutdownAfterJobFinishes: true
   ttlSecondsAfterFinished: 3600
+  submitterPodTemplate:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: ray-job-submitter
+        image: rayproject/ray:2.9.0
   rayClusterSpec:
     rayVersion: '2.9.0'
     headGroupSpec:

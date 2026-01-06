@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Form, Input, Button, Card, Space, Collapse, message, Typography, Select, InputNumber, Row, Col } from 'antd';
 import { DownloadOutlined, KeyOutlined, RobotOutlined, SettingOutlined, ReloadOutlined } from '@ant-design/icons';
 import operationRefreshManager from '../hooks/useOperationRefresh';
@@ -6,12 +6,14 @@ import resourceEventBus from '../utils/resourceEventBus';
 
 const { Panel } = Collapse;
 const { Text } = Typography;
-const { Option } = Select;
+const { Option, OptGroup } = Select;
 
 const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [storages, setStorages] = useState([]);
+  const [instanceTypes, setInstanceTypes] = useState({ hyperpod: [], karpenterHyperPod: [], eksNodeGroup: [], karpenter: [] });
+  const [instanceTypesLoading, setInstanceTypesLoading] = useState(false);
 
   // 获取可用的S3存储配置
   const fetchStorages = async () => {
@@ -30,8 +32,45 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
     }
   };
 
+  // 获取集群可用实例类型
+  const fetchInstanceTypes = useCallback(async () => {
+    setInstanceTypesLoading(true);
+    try {
+      const response = await fetch('/api/cluster/cluster-available-instance');
+      const data = await response.json();
+      if (data.success) {
+        setInstanceTypes(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching instance types:', error);
+    } finally {
+      setInstanceTypesLoading(false);
+    }
+  }, []);
+
+  // 实例类型选项
+  const instanceTypeOptions = useMemo(() => (
+    <>
+      <OptGroup label="HyperPod (ml.*)">
+        {instanceTypes.hyperpod.map(type => (
+          <Option key={`hp-${type.type}`} value={type.type}>
+            {type.type} ({type.group}) [{type.count} nodes]
+          </Option>
+        ))}
+      </OptGroup>
+      <OptGroup label="EC2">
+        {instanceTypes.eksNodeGroup.map(type => (
+          <Option key={`eks-${type.type}-${type.nodeGroup}`} value={type.type}>
+            {type.type} (NodeGroup: {type.nodeGroup}) [{type.count} nodes]
+          </Option>
+        ))}
+      </OptGroup>
+    </>
+  ), [instanceTypes]);
+
   useEffect(() => {
     fetchStorages();
+    fetchInstanceTypes();
     
     // 暂时注释掉全局刷新监听，避免超时问题
     // const unsubscribe = globalRefreshManager.subscribe(async () => {
@@ -58,10 +97,11 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
           modelId: values.modelId,
           hfToken: values.hfToken || null,
           resources: {
-            cpu: values.cpu || 8,
-            memory: values.memory || 16,
+            cpu: values.cpu ?? -1,
+            memory: values.memory ?? -1,
           },
-          s3Storage: values.s3Storage || 's3-claim'
+          s3Storage: values.s3Storage || 's3-claim',
+          instanceType: values.instanceType || null
         }),
       });
       
@@ -112,8 +152,8 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
         layout="vertical"
         onFinish={handleDownload}
         initialValues={{
-          cpu: 8,
-          memory: 16,
+          cpu: -1,
+          memory: -1,
           s3Storage: 's3-claim'
         }}
       >
@@ -169,19 +209,43 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
             } 
             key="advanced"
           >
+            {/* Instance Type 选择器 */}
+            <Form.Item
+              name="instanceType"
+              label={
+                <Space>
+                  Instance Type
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<ReloadOutlined />}
+                    onClick={fetchInstanceTypes}
+                    loading={instanceTypesLoading}
+                  />
+                </Space>
+              }
+            >
+              <Select
+                placeholder="Any (no node selector)"
+                loading={instanceTypesLoading}
+                allowClear
+                style={{ fontFamily: 'monospace' }}
+              >
+                {instanceTypeOptions}
+              </Select>
+            </Form.Item>
+
             {/* 资源配置 */}
             <Row gutter={16} style={{ marginBottom: 16 }}>
               <Col span={12}>
                 <Form.Item
                   name="cpu"
                   label="CPU Cores"
-                  rules={[{ required: true, message: 'Please input CPU cores' }]}
                 >
                   <InputNumber
-                    min={1}
+                    min={-1}
                     max={32}
                     style={{ width: '100%' }}
-                    placeholder="8"
                   />
                 </Form.Item>
               </Col>
@@ -189,13 +253,11 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
                 <Form.Item
                   name="memory"
                   label="Memory (GB)"
-                  rules={[{ required: true, message: 'Please input memory' }]}
                 >
                   <InputNumber
-                    min={1}
+                    min={-1}
                     max={128}
                     style={{ width: '100%' }}
-                    placeholder="16"
                   />
                 </Form.Item>
               </Col>

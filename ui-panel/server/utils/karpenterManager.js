@@ -1184,7 +1184,13 @@ class KarpenterManager {
         status: 'Active'
       }));
     } catch (error) {
-      console.error('Error getting NodeClasses:', error);
+      // Karpenter 未安装时优雅处理
+      if (error.message?.includes("doesn't have a resource type") ||
+          error.stderr?.includes("doesn't have a resource type")) {
+        console.log('Karpenter not installed: ec2nodeclass resource not available');
+      } else {
+        console.error('Error getting NodeClasses:', error.message || error);
+      }
       return [];
     }
   }
@@ -1326,7 +1332,13 @@ class KarpenterManager {
         status: 'Active'
       }));
     } catch (error) {
-      console.error('Error getting NodePools:', error);
+      // Karpenter 未安装时优雅处理
+      if (error.message?.includes("doesn't have a resource type") ||
+          error.stderr?.includes("doesn't have a resource type")) {
+        console.log('Karpenter not installed: nodepool resource not available');
+      } else {
+        console.error('Error getting NodePools:', error.message || error);
+      }
       return [];
     }
   }
@@ -1723,7 +1735,13 @@ description: "Medium priority for pods on spot nodes"
         creationTimestamp: node.metadata.creationTimestamp
       }));
     } catch (error) {
-      console.error('Error getting Karpenter nodes:', error);
+      // 没有 Karpenter 节点时静默处理
+      if (error.message?.includes('No resources found') ||
+          error.stderr?.includes('No resources found')) {
+        console.log('No Karpenter-managed nodes found');
+      } else {
+        console.error('Error getting Karpenter nodes:', error.message || error);
+      }
       return [];
     }
   }

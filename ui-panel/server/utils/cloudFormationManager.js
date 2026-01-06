@@ -350,36 +350,36 @@ class CloudFormationManager {
   static async createEksNodeGroup(nodeGroupConfig, region, clusterName, vpcId, securityGroupId, allSubnets) {
     try {
       const fs = require('fs');
-      const { spawn } = require('child_process');
-      
+      const ComputeSubnetManager = require('./computeSubnetManager');
+
       // 使用CloudFormation输出的Security Group（与HyperPod相同）
       console.log(`Using security group: ${securityGroupId}`);
+
+      const targetAZ = nodeGroupConfig.availabilityZone;
+      if (!targetAZ) {
+        throw new Error('availabilityZone is required');
+      }
+
+      // 使用 ComputeSubnetManager 确保目标 AZ 有 compute subnet
+      const { subnetId: computeSubnetId, created } = await ComputeSubnetManager.ensureComputeSubnet(
+        vpcId, targetAZ, region, clusterName
+      );
+      console.log(`Using compute subnet: ${computeSubnetId} (created: ${created})`);
+
+      // 找到另一个不同AZ的private subnet
+      const otherSubnet = allSubnets.privateSubnets.find(s =>
+        s.availabilityZone !== targetAZ
+      );
+
+      if (!otherSubnet) {
+        throw new Error(`No private subnet found in different AZ from ${targetAZ}`);
+      }
 
       // 生成eksctl配置
       const spotConfig = nodeGroupConfig.useSpotInstances ? `
     instanceType: ${nodeGroupConfig.instanceType}
     spot: true` : `
     instanceType: ${nodeGroupConfig.instanceType}`;
-
-      // 构建VPC私有子网配置：找到用户选择的HyperPod subnet和另一个不同AZ的private subnet
-      const selectedSubnet = allSubnets.privateSubnets.find(s => s.subnetId === nodeGroupConfig.subnetId);
-      if (!selectedSubnet) {
-        throw new Error(`Selected subnet ${nodeGroupConfig.subnetId} not found in private subnets`);
-      }
-      
-      const selectedAZ = selectedSubnet.availabilityZone;
-      
-      // 找到另一个不同AZ的private subnet
-      const otherSubnet = allSubnets.privateSubnets.find(s => 
-        s.availabilityZone !== selectedAZ
-      );
-      
-      if (!otherSubnet) {
-        throw new Error(`No private subnet found in different AZ from ${selectedAZ}`);
-      }
-
-      // 获取目标子网的AZ
-      const targetAZ = selectedAZ;
 
       // 检查实例类型是否支持EFA
       const efaSupported = await this.checkEfaSupport(nodeGroupConfig.instanceType);
@@ -397,8 +397,8 @@ vpc:
   securityGroup: ${securityGroupId}
   subnets:
     private:
-      ${selectedAZ}:
-        id: ${selectedSubnet.subnetId}
+      ${targetAZ}:
+        id: ${computeSubnetId}
       ${otherSubnet.availabilityZone}:
         id: ${otherSubnet.subnetId}
 
@@ -426,20 +426,13 @@ managedNodeGroups:
         fsx: true
 `;
 
-    // labels:
-    //   node-type: gpu
-    // taints:
-    //   - key: nvidia.com/gpu
-    //     value: "true"
-    //     effect: NoSchedule
-      
       // 生成临时配置文件
       const timestamp = new Date().toISOString().replace(/[-:.T]/g, '').slice(0, 14);
       const configFileName = `eksctl-nodegroup-${nodeGroupConfig.nodeGroupName}-${timestamp}.yaml`;
       const configFilePath = path.join('/tmp', configFileName);
-      
+
       fs.writeFileSync(configFilePath, eksctlConfig);
-      
+
       return {
         configFile: configFilePath,
         configFileName: configFileName,
@@ -447,6 +440,107 @@ managedNodeGroups:
       };
     } catch (error) {
       console.error('Error creating EKS node group config:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 创建EKS节点组（支持Capacity Block）
+   * @param {Object} nodeGroupConfig - 节点组配置
+   * @param {string} nodeGroupConfig.availabilityZone - 可用区
+   * @param {string} nodeGroupConfig.capacityReservationId - Capacity Reservation ID
+   * @param {string} region - AWS区域
+   * @param {string} clusterName - EKS集群名称
+   * @param {string} vpcId - VPC ID
+   * @param {string} securityGroupId - 安全组ID
+   * @param {Array} allSubnets - 所有子网信息
+   * @returns {Promise<Object>} 创建结果
+   */
+  static async createEksNodeGroupWithCapacityBlock(nodeGroupConfig, region, clusterName, vpcId, securityGroupId, allSubnets) {
+    try {
+      const fs = require('fs');
+      const ComputeSubnetManager = require('./computeSubnetManager');
+
+      const targetAZ = nodeGroupConfig.availabilityZone;
+      if (!targetAZ) {
+        throw new Error('availabilityZone is required');
+      }
+      if (!nodeGroupConfig.capacityReservationId) {
+        throw new Error('capacityReservationId is required for Capacity Block');
+      }
+
+      const { subnetId: computeSubnetId, created } = await ComputeSubnetManager.ensureComputeSubnet(
+        vpcId, targetAZ, region, clusterName
+      );
+      console.log(`Using compute subnet: ${computeSubnetId} (created: ${created})`);
+
+      const otherSubnet = allSubnets.privateSubnets.find(s => s.availabilityZone !== targetAZ);
+      if (!otherSubnet) {
+        throw new Error(`No private subnet found in different AZ from ${targetAZ}`);
+      }
+
+      const efaSupported = await this.checkEfaSupport(nodeGroupConfig.instanceType);
+
+      const eksctlConfig = `apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: ${clusterName}
+  region: ${region}
+
+vpc:
+  id: ${vpcId}
+  securityGroup: ${securityGroupId}
+  subnets:
+    private:
+      ${targetAZ}:
+        id: ${computeSubnetId}
+      ${otherSubnet.availabilityZone}:
+        id: ${otherSubnet.subnetId}
+
+managedNodeGroups:
+  - name: ${nodeGroupConfig.nodeGroupName}
+    instanceType: ${nodeGroupConfig.instanceType}
+    capacityReservation:
+      capacityReservationTarget:
+        capacityReservationID: "${nodeGroupConfig.capacityReservationId}"
+    instanceMarketOptions:
+      marketType: "capacity-block"
+    volumeSize: ${nodeGroupConfig.volumeSize || 200}
+    minSize: ${nodeGroupConfig.minSize}
+    maxSize: ${nodeGroupConfig.maxSize}
+    desiredCapacity: ${nodeGroupConfig.desiredCapacity}
+    availabilityZones: ["${targetAZ}"]
+    efaEnabled: ${efaSupported}
+    privateNetworking: true
+    securityGroups:
+      attachIDs: ["${securityGroupId}"]
+      withShared: false
+    iam:
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      withAddonPolicies:
+        ebs: true
+        fsx: true
+`;
+
+      const timestamp = new Date().toISOString().replace(/[-:.T]/g, '').slice(0, 14);
+      const configFileName = `eksctl-nodegroup-cb-${nodeGroupConfig.nodeGroupName}-${timestamp}.yaml`;
+      const configFilePath = path.join('/tmp', configFileName);
+
+      fs.writeFileSync(configFilePath, eksctlConfig);
+
+      return {
+        configFile: configFilePath,
+        configFileName: configFileName,
+        nodeGroupName: nodeGroupConfig.nodeGroupName
+      };
+    } catch (error) {
+      console.error('Error creating EKS node group config with Capacity Block:', error);
       throw error;
     }
   }
