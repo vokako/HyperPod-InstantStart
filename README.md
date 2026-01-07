@@ -41,13 +41,14 @@ HyperPod-InstantStart provides a unified interface for managing ML infrastructur
 ### Agentic Orchestration and AI Workloads
 ![agentic](./resources/agentic.gif)
 
-## Key Components in Web UI Panel
+## Key Components
 
 - **Cluster Management**: Supports EKS cluster creation, importing existing EKS clusters, cluster environment configuration, HyperPod cluster creation and scaling, EKS Node Group creation
 - **Model Management**: Supports multiple S3 CSI configurations, as well as HuggingFace model downloads (CPU Pod)
 - **Inference**: Hosting for vLLM, SGLang or any custom container, with support for binding Pods to different Services (no need to repeatedly destroy and create Pods during resource rebalancing)
 - **Training**: Supports model training patterns including LlamaFactory, Verl, and Torch Script
 - **Training History**: Integration with SageMaker-managed MLFlow creation and display/sharing of training performance metrics
+- **(NEW)Agentic Orchestration**: Provides integrated MCP server for Natural language based AI task orchestration, e.g. cluster Management, Inference, (Coming Soon) Training
 
 For detailed setup instructions, please refer to [Feishu Doc (zh_cn)](https://amzn-chn.feishu.cn/docx/VZfAdXTJKor7TCxPrZdcbGYXnaf?from=from_copylink), or [Lark Doc (en)](https://amzn-chn.feishu.cn/wiki/KKgVwwfiuiof9KkAP0CcYXfnnqd?from=from_copylink)
 
