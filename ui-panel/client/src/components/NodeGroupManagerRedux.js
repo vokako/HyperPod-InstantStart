@@ -954,6 +954,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         tieredStorageMode: result.advancedFeatures.tieredStorage.configMode,
         tieredStoragePercentage: result.advancedFeatures.tieredStorage.percentage || 50,
         inferenceOperatorEnabled: result.advancedFeatures.inferenceOperator.enabled,
+        trainingOperatorEnabled: result.advancedFeatures.trainingOperator?.enabled || false,
         // HAMi 配置
         hamiEnabled: hamiData.installed || false,
         hamiSplitCount: hamiData.config?.splitCount || 10,
@@ -987,6 +988,11 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       // Inference Operator
       updates.inferenceOperator = {
         enabled: values.inferenceOperatorEnabled
+      };
+
+      // Training Operator
+      updates.trainingOperator = {
+        enabled: values.trainingOperatorEnabled
       };
 
       // HAMi GPU Virtualization
@@ -2357,6 +2363,35 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
                   getFieldValue('inferenceOperatorEnabled') ? (
                     <Alert
                       message="Inference Operator enables deployment and management of ML inference endpoints on your EKS cluster. This will install required IAM roles and Helm charts."
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                    />
+                  ) : null
+                }
+              </Form.Item>
+            </Card>
+
+            {/* Training Operator Section */}
+            <Card 
+              size="small" 
+              style={{ marginBottom: 16, backgroundColor: '#fafafa' }}
+            >
+              <Form.Item 
+                name="trainingOperatorEnabled" 
+                valuePropName="checked"
+                style={{ marginBottom: 12 }}
+              >
+                <Checkbox>
+                  <Text strong>HyperPod Training Operator</Text>
+                </Checkbox>
+              </Form.Item>
+
+              <Form.Item noStyle shouldUpdate={(prev, curr) => prev.trainingOperatorEnabled !== curr.trainingOperatorEnabled}>
+                {({ getFieldValue }) => 
+                  getFieldValue('trainingOperatorEnabled') ? (
+                    <Alert
+                      message="Training Operator enables auto-recovery of distributed training jobs (PyTorchJob, etc.) on your HyperPod cluster."
                       type="info"
                       showIcon
                       style={{ marginBottom: 12 }}

@@ -804,14 +804,9 @@ router.post('/hyperpod/update-software', async (req, res) => {
 router.get('/hyperpod/advanced-features', async (req, res) => {
   try {
     const ManagedFeaturesManager = require('./utils/managedFeaturesManager');
-    const activeClusterName = clusterManager.getActiveCluster();
-
-    if (!activeClusterName) {
-      return res.status(400).json({ error: 'No active cluster found' });
-    }
-
-    const features = await ManagedFeaturesManager.getFeatures(activeClusterName, clusterManager);
-    res.json({ success: true, features });
+    const manager = new ManagedFeaturesManager(clusterManager);
+    const result = await manager.getAdvancedFeatures();
+    res.json({ success: true, ...result });
   } catch (error) {
     console.error('Error getting advanced features:', error);
     res.status(500).json({ error: error.message });
@@ -825,15 +820,9 @@ router.get('/hyperpod/advanced-features', async (req, res) => {
 router.post('/hyperpod/advanced-features', async (req, res) => {
   try {
     const ManagedFeaturesManager = require('./utils/managedFeaturesManager');
-    const activeClusterName = clusterManager.getActiveCluster();
-
-    if (!activeClusterName) {
-      return res.status(400).json({ error: 'No active cluster found' });
-    }
-
-    const { features } = req.body;
-    const result = await ManagedFeaturesManager.setFeatures(activeClusterName, features, clusterManager);
-    res.json({ success: true, result });
+    const manager = new ManagedFeaturesManager(clusterManager);
+    const result = await manager.updateAdvancedFeatures(req.body);
+    res.json(result);
   } catch (error) {
     console.error('Error setting advanced features:', error);
     res.status(500).json({ error: error.message });

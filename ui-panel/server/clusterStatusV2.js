@@ -319,7 +319,8 @@ class ClusterStatusV2 {
       const nodesData = JSON.parse(nodesOutput);
       
       if (!nodesData.items || nodesData.items.length === 0) {
-        throw new Error('No nodes found in cluster');
+        console.log('No nodes found in cluster, returning empty result');
+        return { nodes: [], fetchTime: Date.now() - startTime, timestamp: Date.now(), nodeCount: 0, version: 'v2' };
       }
 
       // 获取 HyperPod capacity type 映射

@@ -36,12 +36,19 @@ class ManagedFeaturesManager {
     // 检查 Inference Operator 状态
     const inferenceOpStatus = await this.inferenceOpManager.checkStatus();
 
+    // 检查 Training Operator 状态
+    const trainingOpStatus = await this._getTrainingOperatorStatus();
+
     // 解析高级功能配置
     const advancedFeatures = {
       tieredStorage: this._parseTieredStorageConfig(clusterData.TieredStorageConfig),
       inferenceOperator: {
         enabled: inferenceOpStatus.installed,
         iamRoles: inferenceOpStatus.iamRoles
+      },
+      trainingOperator: {
+        enabled: trainingOpStatus.installed,
+        status: trainingOpStatus.status
       }
     };
 
@@ -53,12 +60,35 @@ class ManagedFeaturesManager {
   }
 
   /**
+   * 获取 Training Operator 状态
+   */
+  async _getTrainingOperatorStatus() {
+    try {
+      const activeClusterName = this.clusterManager.getActiveCluster();
+      const { region } = await this._getClusterInfo(activeClusterName);
+      const clusterInfo = JSON.parse(fs.readFileSync(
+        path.join(this.clusterManager.getClusterDir(activeClusterName), 'metadata', 'cluster_info.json'), 'utf8'
+      ));
+      const eksClusterName = clusterInfo.eksCluster?.name;
+      if (!eksClusterName) return { installed: false, status: 'NOT_FOUND' };
+
+      const cmd = `aws eks describe-addon --cluster-name ${eksClusterName} --addon-name amazon-sagemaker-hyperpod-training-operator --region ${region} --query "addon.status" --output text 2>/dev/null || echo "NOT_FOUND"`;
+      const { stdout } = await execAsync(cmd);
+      const status = stdout.trim();
+      return { installed: status === 'ACTIVE', status };
+    } catch (error) {
+      return { installed: false, status: 'NOT_FOUND' };
+    }
+  }
+
+  /**
    * 更新高级功能配置
    */
   async updateAdvancedFeatures(updates) {
     const results = {
       tieredStorage: null,
-      inferenceOperator: null
+      inferenceOperator: null,
+      trainingOperator: null
     };
 
     // 1. 更新 Tiered Storage (如果有变化)
@@ -69,6 +99,11 @@ class ManagedFeaturesManager {
     // 2. 更新 Inference Operator (如果有变化)
     if (updates.inferenceOperator !== undefined) {
       results.inferenceOperator = await this._updateInferenceOperator(updates.inferenceOperator);
+    }
+
+    // 3. 更新 Training Operator (如果有变化)
+    if (updates.trainingOperator !== undefined) {
+      results.trainingOperator = await this._updateTrainingOperator(updates.trainingOperator);
     }
 
     return {
@@ -234,6 +269,89 @@ class ManagedFeaturesManager {
     }
 
     return cleaned;
+  }
+
+  /**
+   * 更新 Training Operator
+   */
+  async _updateTrainingOperator(trainingOperator) {
+    const activeClusterName = this.clusterManager.getActiveCluster();
+    const { region, configDir } = await this._getClusterInfo(activeClusterName);
+    const clusterInfo = JSON.parse(fs.readFileSync(
+      path.join(this.clusterManager.getClusterDir(activeClusterName), 'metadata', 'cluster_info.json'), 'utf8'
+    ));
+    const eksClusterName = clusterInfo.eksCluster?.name;
+    if (!eksClusterName) throw new Error('EKS cluster not found');
+
+    const currentStatus = await this._getTrainingOperatorStatus();
+
+    if (trainingOperator.enabled && !currentStatus.installed) {
+      // 安装 Training Operator
+      return await this._installTrainingOperator(eksClusterName, region, configDir);
+    } else if (!trainingOperator.enabled && currentStatus.installed) {
+      // 卸载 Training Operator
+      return await this._uninstallTrainingOperator(eksClusterName, region);
+    }
+
+    return { success: true, message: 'No changes needed' };
+  }
+
+  /**
+   * 安装 Training Operator（等待 cert-manager 就绪）
+   */
+  async _installTrainingOperator(eksClusterName, region, configDir) {
+    // 等待 cert-manager 就绪
+    const certCmd = `aws eks describe-addon --cluster-name ${eksClusterName} --addon-name cert-manager --region ${region} --query "addon.status" --output text 2>/dev/null || echo "NOT_FOUND"`;
+    const { stdout: certStatus } = await execAsync(certCmd);
+    if (certStatus.trim() !== 'ACTIVE') {
+      throw new Error('cert-manager addon is not ACTIVE. Please wait for it to be ready.');
+    }
+
+    // 清理失败的安装
+    const statusCmd = `aws eks describe-addon --cluster-name ${eksClusterName} --addon-name amazon-sagemaker-hyperpod-training-operator --region ${region} --query "addon.status" --output text 2>/dev/null || echo "NOT_FOUND"`;
+    const { stdout: status } = await execAsync(statusCmd);
+    const currentStatus = status.trim();
+
+    if (currentStatus === 'ACTIVE') {
+      return { success: true, message: 'Training Operator is already installed' };
+    }
+
+    if (currentStatus === 'CREATE_FAILED' || currentStatus === 'DEGRADED') {
+      await execAsync(`aws eks delete-addon --cluster-name ${eksClusterName} --addon-name amazon-sagemaker-hyperpod-training-operator --region ${region} 2>/dev/null || true`);
+      await new Promise(r => setTimeout(r, 30000)); // 等待删除
+    }
+
+    // 安装 addon
+    await execAsync(`aws eks create-addon --cluster-name ${eksClusterName} --addon-name amazon-sagemaker-hyperpod-training-operator --region ${region} --resolve-conflicts OVERWRITE`);
+
+    // 等待安装完成（最多 5 分钟）
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 10000));
+      const { stdout: checkStatus } = await execAsync(statusCmd);
+      if (checkStatus.trim() === 'ACTIVE') {
+        return { success: true, message: 'Training Operator installed successfully' };
+      }
+      if (checkStatus.trim() === 'CREATE_FAILED') {
+        throw new Error('Training Operator installation failed');
+      }
+    }
+
+    throw new Error('Training Operator installation timed out');
+  }
+
+  /**
+   * 卸载 Training Operator
+   */
+  async _uninstallTrainingOperator(eksClusterName, region) {
+    const statusCmd = `aws eks describe-addon --cluster-name ${eksClusterName} --addon-name amazon-sagemaker-hyperpod-training-operator --region ${region} --query "addon.status" --output text 2>/dev/null || echo "NOT_FOUND"`;
+    const { stdout: status } = await execAsync(statusCmd);
+
+    if (status.trim() === 'NOT_FOUND') {
+      return { success: true, message: 'Training Operator is not installed' };
+    }
+
+    await execAsync(`aws eks delete-addon --cluster-name ${eksClusterName} --addon-name amazon-sagemaker-hyperpod-training-operator --region ${region}`);
+    return { success: true, message: 'Training Operator uninstalled successfully' };
   }
 }
 
