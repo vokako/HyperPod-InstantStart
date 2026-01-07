@@ -2,6 +2,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const EKSServiceHelper = require('./eksServiceHelper');
+const { generateNLBAnnotations } = require('./inferenceUtils');
 
 class RoutingManager {
   static generateRouterYaml(config) {
@@ -230,7 +231,7 @@ spec:
     ).join('\n');
 
     if (serviceType === 'external') {
-      const nlbAnnotations = this.generateNLBAnnotations(true);
+      const nlbAnnotations = generateNLBAnnotations(true);
       return `---
 apiVersion: v1
 kind: Service
@@ -266,26 +267,7 @@ ${portsSection}`;
     }
   }
 
-  /**
-   * 生成 LoadBalancer annotations
-   * @param {boolean} isExternal - 是否为外部访问
-   * @returns {string} annotations YAML 字符串
-   */
-  static generateNLBAnnotations(isExternal) {
-    if (isExternal) {
-      return `
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
-    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"`;
-    } else {
-      return `
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
-    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"`;
-    }
-  }
+  // generateNLBAnnotations 已迁移至 inferenceUtils.js
 
   static async applyRouterConfiguration(config) {
     try {

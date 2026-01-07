@@ -20,7 +20,7 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 
 // 依赖模块
-const ClusterManager = require('./cluster-manager');
+const ClusterManager = require('./clusterManager');
 const CloudFormationManager = require('./utils/cloudFormationManager');
 const HyperPodDependencyManager = require('./utils/hyperPodDependencyManager');
 const MetadataUtils = require('./utils/metadataUtils');

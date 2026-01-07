@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import resourceEventBus from '../utils/resourceEventBus';
 import {
   Form,
   Input,
@@ -11,7 +12,8 @@ import {
   Col,
   AutoComplete,
   Select,
-  Radio
+  Radio,
+  message
 } from 'antd';
 import {
   RocketOutlined,
@@ -32,7 +34,7 @@ const { TextArea } = Input;
 const { Option, OptGroup } = Select;
 
 
-const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
+const ConfigPanel = ({ deploymentStatus }) => {
   const [deploymentForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
 
@@ -209,16 +211,34 @@ const ConfigPanel = ({ onDeploy, deploymentStatus }) => {
       const deploymentConfig = {
         ...values,
         // 处理实例类型，确保后端接收到纯实例类型数组
-        instanceTypes: processInstanceTypes(values.instanceTypes),
-        deploymentType: 'container'  // 固定为container类型
+        instanceTypes: processInstanceTypes(values.instanceTypes)
       };
 
       console.log('deploymentConfig:', deploymentConfig);
-      console.log('Calling onDeploy with config:', deploymentConfig);
-      await onDeploy(deploymentConfig);
-      console.log('onDeploy completed successfully');
+      console.log('Calling /api/deploy/container');
+
+      const response = await fetch('/api/deploy/container', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(deploymentConfig),
+      });
+
+      const result = await response.json();
+      console.log('API response:', result);
+
+      if (result.success) {
+        message.success(`Container deployment successful: ${result.deploymentTag}`);
+        // 触发刷新事件
+        resourceEventBus.emit('model-deploy', {
+          deploymentTag: result.deploymentTag,
+          deploymentType: 'container'
+        });
+      } else {
+        message.error(`Deployment failed: ${result.error}`);
+      }
     } catch (error) {
       console.error('Error in handleSubmit:', error);
+      message.error('Failed to deploy container');
     } finally {
       setLoading(false);
     }

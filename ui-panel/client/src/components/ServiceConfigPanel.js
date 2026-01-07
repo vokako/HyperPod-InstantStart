@@ -150,32 +150,34 @@ const ServiceConfigPanel = ({ onDeploy, deploymentStatus }) => {
               </Tooltip>
             </Space>
           }
-          name="modelPool"
-          rules={[
-            { required: true, message: 'Please select a model pool!' }
-          ]}
         >
-          <Space.Compact style={{ width: '100%' }}>
-            <Select 
-              placeholder={modelPools.length === 0 ? "No model pools found" : "Select model pool"}
-              loading={modelPoolsLoading}
-              notFoundContent={modelPoolsLoading ? "Loading..." : "No model pools available"}
-              onFocus={fetchModelPools}
-              style={{ flex: 1 }}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <Form.Item
+              name="modelPool"
+              rules={[{ required: true, message: 'Please select a model pool!' }]}
+              style={{ flex: 1, marginBottom: 0 }}
+              noStyle={false}
             >
-              {modelPools.map(pool => (
-                <Option key={pool.deploymentName} value={pool.deploymentName}>
-                  {pool.deploymentName} ({pool.deploymentType}) - {pool.status}
-                </Option>
-              ))}
-            </Select>
+              <Select
+                placeholder={modelPools.length === 0 ? "No model pools found" : "Select model pool"}
+                loading={modelPoolsLoading}
+                notFoundContent={modelPoolsLoading ? "Loading..." : "No model pools available"}
+                style={{ width: '100%' }}
+              >
+                {modelPools.map(pool => (
+                  <Option key={pool.deploymentName} value={pool.deploymentName}>
+                    {pool.deploymentName} ({pool.deploymentType}) - {pool.status}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
             <Button
               icon={<ReloadOutlined />}
               loading={modelPoolsLoading}
               onClick={fetchModelPools}
               title="Refresh model pools"
             />
-          </Space.Compact>
+          </div>
         </Form.Item>
 
 

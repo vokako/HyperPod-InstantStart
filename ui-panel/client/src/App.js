@@ -611,46 +611,9 @@ function App() {
     }
   }, []); // 空依赖数组
 
-  const handleDeploy = useCallback(async (config) => {
-    console.log('🚀 handleDeploy called with config:', config);
-    try {
-      console.log('🚀 Deploying with config:', config);
-      const response = await fetch('/api/deploy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(config),
-      });
-      
-      console.log('📡 Response received:', response);
-      const result = await response.json();
-      console.log('📊 Response JSON:', result);
-      
-      if (result.success) {
-        // 🚀 触发操作刷新 - 立即刷新相关组件（旧机制，保留兼容）
-        operationRefreshManager.triggerOperationRefresh('model-deploy', {
-          modelId: config.modelId,
-          deploymentType: config.deploymentType,
-          timestamp: new Date().toISOString(),
-          source: 'config-panel'
-        });
-
-        // 触发新的事件总线（新机制）
-        resourceEventBus.emit('model-deploy', {
-          modelId: config.modelId,
-          deploymentType: config.deploymentType
-        });
-        
-        console.log('✅ Model deployment initiated and refresh triggered');
-      } else {
-        message.error(`Deployment failed: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('❌ Error deploying:', error);
-      message.error('Failed to deploy model');
-    }
-  }, []); // useCallback dependency array
+  // handleDeploy 已移至各组件内部:
+  // - ConfigPanel.js -> /api/deploy/container
+  // - ManagedInferencePanel.js -> /api/deploy/managed-inference
 
   const handleServiceDeploy = async (config) => {
     console.log('🚀 handleServiceDeploy called with config:', config);
@@ -988,8 +951,7 @@ function App() {
                         key: 'model-config',
                         label: 'Model Deployment',
                         children: (
-                          <ConfigPanel 
-                            onDeploy={handleDeploy}
+                          <ConfigPanel
                             deploymentStatus={deploymentStatus}
                           />
                         )
@@ -1040,7 +1002,6 @@ function App() {
                         label: 'Managed Inference',
                         children: (
                           <ManagedInferencePanel
-                            onDeploy={handleDeploy}
                             deploymentStatus={deploymentStatus}
                           />
                         )

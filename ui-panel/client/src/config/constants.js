@@ -9,7 +9,6 @@ export const CONFIG = {
     // PODS: '/api/pods',
     // SERVICES: '/api/services',
     DEPLOYMENTS: '/api/deployments',
-    DEPLOYMENT_DETAILS: '/api/deployment-details',
     DEPLOY: '/api/deploy',
     UNDEPLOY: '/api/undeploy',
     TEST_API: '/api/test-api'

@@ -1,8 +1,8 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { exec } = require('child_process');
-const ClusterManager = require('./cluster-manager');
-const MultiClusterLogManager = require('./multi-cluster-log-manager');
+const ClusterManager = require('./clusterManager');
+const MultiClusterLogManager = require('./multiClusterLogManager');
 
 // 多集群管理API
 class MultiClusterAPIs {
@@ -394,7 +394,7 @@ class MultiClusterAPIs {
       console.log(`Launching cluster (Step 1) for: ${activeCluster}`);
       
       // 2. 检查 Step 1 是否已经完成（防重复创建）
-      const MultiClusterStatus = require('./multi-cluster-status');
+      const MultiClusterStatus = require('./multiClusterStatus');
       const statusChecker = new MultiClusterStatus();
       const step1Status = await statusChecker.checkStep1Status(activeCluster);
       
@@ -469,7 +469,7 @@ class MultiClusterAPIs {
       console.log(`Configuring cluster (Step 2) for: ${activeCluster}`);
       
       // 1. 检查 Step 1 是否已完成（Step 2 的前置条件）
-      const MultiClusterStatus = require('./multi-cluster-status');
+      const MultiClusterStatus = require('./multiClusterStatus');
       const statusChecker = new MultiClusterStatus();
       const step1Status = await statusChecker.checkStep1Status(activeCluster);
       

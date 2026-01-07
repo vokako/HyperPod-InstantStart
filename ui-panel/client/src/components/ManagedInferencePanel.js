@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import resourceEventBus from '../utils/resourceEventBus';
 import {
   Form,
   Input,
@@ -42,7 +43,7 @@ const { Option } = Select;
 const { Panel } = Collapse;
 const { Text, Paragraph } = Typography;
 
-const ManagedInferencePanel = ({ onDeploy, deploymentStatus }) => {
+const ManagedInferencePanel = ({ deploymentStatus }) => {
   const [deploymentForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
 
@@ -253,7 +254,6 @@ const ManagedInferencePanel = ({ onDeploy, deploymentStatus }) => {
     try {
       const deploymentConfig = {
         ...values,
-        deploymentType: 'managed-inference',
         // KV Cache 配置
         kvCache: enableKvCache ? {
           enableL1Cache: enableL1Cache,
@@ -265,15 +265,34 @@ const ManagedInferencePanel = ({ onDeploy, deploymentStatus }) => {
         intelligentRouting: enableIntelligentRouting ? {
           enabled: true,
           strategy: routingStrategy,
-          sessionKey: (routingStrategy === 'session' || routingStrategy === 'kvaware') 
-            ? values.sessionKey 
+          sessionKey: (routingStrategy === 'session' || routingStrategy === 'kvaware')
+            ? values.sessionKey
             : undefined
         } : undefined
       };
 
       console.log('Managed inference deployment config:', deploymentConfig);
-      await onDeploy(deploymentConfig);
-      message.success('Managed inference deployment initiated');
+      console.log('Calling /api/deploy/managed-inference');
+
+      const response = await fetch('/api/deploy/managed-inference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(deploymentConfig),
+      });
+
+      const result = await response.json();
+      console.log('API response:', result);
+
+      if (result.success) {
+        message.success(`Managed inference deployment successful: ${result.deploymentTag}`);
+        // 触发刷新事件
+        resourceEventBus.emit('model-deploy', {
+          deploymentTag: result.deploymentTag,
+          deploymentType: 'managed-inference'
+        });
+      } else {
+        message.error(`Deployment failed: ${result.error}`);
+      }
     } catch (error) {
       console.error('Error in handleSubmit:', error);
       message.error('Failed to submit deployment');

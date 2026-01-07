@@ -7,9 +7,6 @@ const execAsync = promisify(exec);
 const fs = require('fs-extra');
 const YAML = require('yaml');
 const path = require('path');
-const https = require('https');
-const http = require('http');
-const { parse } = require('shell-quote');
 
 // 加载 user.env 配置文件
 require('dotenv').config({ path: path.join(__dirname, '../client/user.env') });
@@ -22,6 +19,14 @@ const MetadataUtils = require('./utils/metadataUtils');
 const EKSServiceHelper = require('./utils/eksServiceHelper');
 const NetworkManager = require('./utils/networkManager');
 const AWSInstanceTypeManager = require('./utils/awsInstanceTypeManager');
+const {
+  generateNLBAnnotations,
+  parseInferenceCommand,
+  makeHttpRequest,
+  generateDeploymentTag,
+  generateHybridNodeSelectorTerms,
+  generateResourcesSection
+} = require('./utils/inferenceUtils');
 
 // 引入集群状态V2模块
 const { 
@@ -56,6 +61,9 @@ const eksCreationManager = require('./eksCreationManager');
 
 // 引入 Training Job 管理模块
 const trainingJobManager = require('./trainingJobManager');
+
+// 引入 Deployment 管理模块
+const deploymentManager = require('./deploymentManager');
 
 const app = express();
 const PORT = process.env.API_PORT || 3001;
@@ -177,190 +185,8 @@ function executeKubectl(command, timeout = 30000) { // 默认30秒超时
 }
 
 // shouldUseThreadsPerCore2 函数已迁移至 hyperpodApiManager.js
-// generateModelTag 函数已迁移至 s3-storage-manager.js
-
-// 生成NLB注解的函数
-function generateNLBAnnotations(isExternal) {
-  if (isExternal) {
-    return `
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
-    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"`;
-  } else {
-    return `
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
-    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"`;
-  }
-}
-
-// 简化的命令解析函数 - 移除GPU自动解析逻辑
-function parseVllmCommand(deploymentCommandString) {
-  // 移除换行符和多余空格，处理反斜杠换行
-  const cleanCommand = deploymentCommandString
-    .replace(/\\\s*\n/g, ' ')  // 处理反斜杠换行
-    .replace(/\s+/g, ' ')      // 合并多个空格
-    .trim();
-  
-  // 使用Shell-Quote进行健壮的命令解析，正确处理引号内的JSON参数
-  const parsed = parse(cleanCommand);
-  const parts = parsed.map(token => {
-    // shell-quote可能返回对象，我们需要转换为字符串
-    if (typeof token === 'string') {
-      return token;
-    } else if (token.op) {
-      // 处理操作符 (如重定向)
-      return token.op;
-    } else {
-      return String(token);
-    }
-  }).filter(part => part.trim());
-  
-  // 检查命令是否为空
-  if (parts.length === 0) {
-    throw new Error('Command cannot be empty');
-  }
-  
-  // 检查是否为已知的命令格式（用于框架识别）
-  const isVllmCommand = parts.includes('python3') && parts.includes('-m') && parts.includes('vllm.entrypoints.openai.api_server');
-  const isVllmServeCommand = parts.includes('vllm') && parts.includes('serve');
-  const isSglangCommand = parts.includes('python3') && parts.includes('-m') && parts.includes('sglang.launch_server');
-  
-  let entrypointIndex = -1;
-  
-  if (isVllmCommand) {
-    entrypointIndex = parts.findIndex(part => part === 'vllm.entrypoints.openai.api_server');
-  } else if (isVllmServeCommand) {
-    entrypointIndex = parts.findIndex(part => part === 'serve');
-  } else if (isSglangCommand) {
-    entrypointIndex = parts.findIndex(part => part === 'sglang.launch_server');
-  }
-  
-  const args = entrypointIndex >= 0 ? parts.slice(entrypointIndex + 1) : parts.slice(1);
-  
-  return {
-    fullCommand: parts,
-    args: args,
-    commandType: (isVllmCommand || isVllmServeCommand) ? 'vllm' : (isSglangCommand ? 'sglang' : 'custom')
-  };
-}
-
-// 改进的HTTP请求代理函数
-function makeHttpRequest(url, payload, method = 'POST') {
-  return new Promise((resolve, reject) => {
-    try {
-      const urlObj = new URL(url);
-      const isHttps = urlObj.protocol === 'https:';
-      const httpModule = isHttps ? https : http;
-      
-      const isGetRequest = method.toUpperCase() === 'GET';
-      const postData = isGetRequest ? '' : JSON.stringify(payload);
-      
-      const options = {
-        hostname: urlObj.hostname,
-        port: urlObj.port || (isHttps ? 443 : 80),
-        path: urlObj.pathname + urlObj.search,
-        method: method.toUpperCase(),
-        headers: {
-          'User-Agent': 'Model-Deployment-UI/1.0'
-        },
-        timeout: 30000 // 30秒超时
-      };
-      
-      // 只有POST请求才需要Content-Type和Content-Length
-      if (!isGetRequest) {
-        options.headers['Content-Type'] = 'application/json';
-        options.headers['Content-Length'] = Buffer.byteLength(postData);
-      }
-      
-      console.log(`HTTP ${method} → ${url}`);
-
-      const req = httpModule.request(options, (res) => {
-        let data = '';
-
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-
-        res.on('end', () => {
-          console.log(`HTTP ${method} ← ${res.statusCode} (${data.length} bytes)`);
-          
-          // 处理不同的响应状态
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            // 成功响应
-            try {
-              const jsonData = JSON.parse(data);
-              resolve({
-                success: true,
-                status: res.statusCode,
-                data: jsonData
-              });
-            } catch (parseError) {
-              // 如果不是JSON，返回原始文本
-              console.log('Response is not JSON, returning as text');
-              resolve({
-                success: true,
-                status: res.statusCode,
-                data: data,
-                isText: true
-              });
-            }
-          } else {
-            // 错误响应
-            try {
-              const errorData = JSON.parse(data);
-              resolve({
-                success: false,
-                status: res.statusCode,
-                error: errorData.error || `HTTP ${res.statusCode}`,
-                data: errorData
-              });
-            } catch (parseError) {
-              resolve({
-                success: false,
-                status: res.statusCode,
-                error: `HTTP ${res.statusCode}: ${data}`,
-                data: data
-              });
-            }
-          }
-        });
-      });
-      
-      req.on('error', (error) => {
-        console.error('HTTP request error:', error);
-        reject({
-          success: false,
-          error: `Network error: ${error.message}`
-        });
-      });
-      
-      req.on('timeout', () => {
-        console.error('HTTP request timeout');
-        req.destroy();
-        reject({
-          success: false,
-          error: 'Request timeout (30s)'
-        });
-      });
-      
-      // 只有非GET请求才写入payload
-      if (!isGetRequest && postData) {
-        req.write(postData);
-      }
-      req.end();
-      
-    } catch (error) {
-      console.error('HTTP request setup error:', error);
-      reject({
-        success: false,
-        error: `Request setup error: ${error.message}`
-      });
-    }
-  });
-}
+// generateModelTag 函数已迁移至 s3StorageManager.js
+// generateNLBAnnotations, parseInferenceCommand, makeHttpRequest 函数已迁移至 utils/inferenceUtils.js
 
 // 获取Pending GPU统计
 app.get('/api/pending-gpus', async (req, res) => {
@@ -690,7 +516,7 @@ app.post('/api/proxy-request', async (req, res) => {
 
 // 新增：代理HTTP请求到模型服务（Port-Forward模式）
 app.post('/api/proxy-request-portforward', async (req, res) => {
-  const portForwardManager = require('./port-forward-manager');
+  const portForwardManager = require('./portForwardManager');
   let requestId = null;
   
   try {
@@ -750,1439 +576,32 @@ app.post('/api/proxy-request-portforward', async (req, res) => {
   }
 });
 
-// 生成并部署YAML配置 - 仅用于推理部署（Container部署）
-app.post('/api/deploy', async (req, res) => {
-  try {
-    const {
-      replicas,
-      huggingFaceToken,
-      deploymentType,
-      deploymentCommand,
-      // ollamaModelId - 已移除Ollama支持
-      gpuCount,
-      gpuMemory = -1,  // 新增：GPU内存配置（MB），默认-1表示忽略HAMi
-      instanceTypes = [],  // 新增：多选实例类型数组
-      serviceType = 'external',  // 新增：服务类型 ('external', 'clusterip', 'modelpool')
-      deploymentName,  // 用户输入的部署名称
-      dockerImage = 'vllm/vllm-openai:latest',
-      port = 8000,  // 端口配置，默认8000
-      cpuRequest = -1,  // CPU请求，默认-1（不设置限制）
-      memoryRequest = -1,  // 内存请求，默认-1（不设置限制）
-      // Managed Inference specific fields
-      modelName,  // 模型名称
-      instanceType,  // 单个实例类型 (ml.*)
-      s3BucketName,  // S3 存储桶名称
-      s3Region,  // S3 区域
-      modelLocation,  // S3 中的模型路径
-      workerCommand,  // Worker 命令（bash 风格字符串，与 ConfigPanel 格式相同）
-      // KV Cache and Intelligent Routing
-      kvCache,  // { enableL1Cache, enableL2Cache, l2CacheUrl }
-      intelligentRouting,  // { enabled, strategy, sessionKey }
-      // Auto-Scaling
-      autoScaling  // { enabled, minReplicaCount, maxReplicaCount, pollingInterval, cooldownPeriod, prometheusTrigger }
-    } = req.body;
-
-    console.log('Inference deployment request:', {
-      deploymentType,
-      deploymentName,
-      // ollamaModelId - 已移除
-      replicas,
-      instanceTypes,
-      serviceType,
-      dockerImage,
-      gpuMemory,
-      cpuRequest,
-      memoryRequest,
-      port,
-      kvCache,
-      intelligentRouting,
-      autoScaling
-    });
-
-    // 生成带时间戳的唯一标签（符合Kubernetes命名规范）
-    // 格式: 251222-021347 (YYMMDD-HHMMSS)
-    const now = new Date();
-    const yy = String(now.getFullYear()).slice(-2);
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
-    const timestamp = `${yy}${mm}${dd}-${hh}${min}${ss}`;
-    const finalDeploymentTag = deploymentName ? `${deploymentName}-${timestamp}` : `model-${timestamp}`;
-
-    console.log(`Generated deployment tag: "${finalDeploymentTag}"`);
-
-    // 根据serviceType确定是否为模型池部署
-    const deployAsPool = (serviceType === 'modelpool');
-    console.log(`Deploy as pool: ${deployAsPool} (serviceType: ${serviceType})`);
-
-    let templatePath, newYamlContent, servEngine;
-
-    // 生成NLB注解 - 基于serviceType判断是否需要外部访问
-    const isExternal = serviceType === 'external';
-    const nlbAnnotations = generateNLBAnnotations(isExternal);
-    console.log(`Generated NLB annotations (external: ${isExternal}):`, nlbAnnotations);
-
-    // 生成混合调度节点选择器条件
-    const generateHybridNodeSelectorTerms = (selectedInstanceTypes) => {
-      if (!selectedInstanceTypes || selectedInstanceTypes.length === 0) {
-        console.warn('No instance types selected, using default ml.g6.12xlarge');
-        selectedInstanceTypes = ['ml.g6.12xlarge'];
-      }
-
-      const hyperpodTypes = selectedInstanceTypes.filter(t => t.startsWith('ml.'));
-      const gpuTypes = selectedInstanceTypes.filter(t => !t.startsWith('ml.'));
-
-      let nodeSelectorTerms = [];
-
-      // HyperPod 节点选择器（原生 + Karpenter 都有 sagemaker.amazonaws.com/compute-type 标签）
-      if (hyperpodTypes.length > 0) {
-        nodeSelectorTerms.push(`            # HyperPod 节点（原生 + Karpenter）
-            - matchExpressions:
-              - key: sagemaker.amazonaws.com/compute-type
-                operator: In
-                values: ["hyperpod"]
-              - key: node.kubernetes.io/instance-type
-                operator: In
-                values: [${hyperpodTypes.map(t => `"${t}"`).join(', ')}]`);
-      }
-
-      // EC2 节点选择器条件 (EKS NodeGroup + Karpenter EC2)
-      if (gpuTypes.length > 0) {
-        nodeSelectorTerms.push(`            # EC2 GPU 节点 (EKS NodeGroup + Karpenter)
-            - matchExpressions:
-              - key: node.kubernetes.io/instance-type
-                operator: In
-                values: [${gpuTypes.map(t => `"${t}"`).join(', ')}]`);
-      }
-
-      return nodeSelectorTerms.join('\n');
-    };
-
-    const hybridNodeSelectorTerms = generateHybridNodeSelectorTerms(instanceTypes);
-    console.log('Generated hybrid node selector terms:', hybridNodeSelectorTerms);
-
-    // 处理 Managed Inference 部署
-    if (deploymentType === 'managed-inference') {
-      console.log('Processing managed-inference deployment');
-
-      // 使用 deploymentName 作为 modelName
-      const effectiveModelName = deploymentName;
-
-      // 验证必需字段
-      if (!deploymentName || !instanceType || !s3BucketName || !s3Region || !modelLocation) {
-        throw new Error('Missing required fields for managed inference deployment');
-      }
-
-      const templatePath = path.join(__dirname, '../templates/managed-inference-template.yaml');
-      const templateContent = await fs.readFile(templatePath, 'utf8');
-
-      // 使用 parseVllmCommand 解析命令（复用 ConfigPanel 的解析逻辑）
-      const parsedCommand = parseVllmCommand(workerCommand);
-      console.log('Parsed managed inference command:', parsedCommand);
-
-      // 转换为 YAML 数组格式
-      // 对于 vLLM (vllm serve)，只使用参数部分（args），因为镜像已有 ENTRYPOINT
-      // 对于 SGLang 等其他命令，使用完整命令（fullCommand）
-      let workerArgsYaml = '';
-      let argsToUse = [];
-
-      if (parsedCommand.commandType === 'vllm') {
-        // vLLM: 镜像有 ENTRYPOINT ["vllm", "serve"]，只需要参数
-        argsToUse = parsedCommand.args || [];
-        console.log('Using args only for vLLM (ENTRYPOINT exists):', argsToUse);
-      } else {
-        // SGLang/Custom: 需要完整命令
-        argsToUse = parsedCommand.fullCommand || [];
-        console.log('Using full command for non-vLLM:', argsToUse);
-      }
-
-      if (argsToUse.length > 0) {
-        workerArgsYaml = argsToUse.map(arg => `\n      - "${arg}"`).join('');
-      }
-
-      // 处理 GPU Memory (HAMi)
-      let gpuMemoryYaml = '';
-      if (gpuMemory && gpuMemory !== -1 && gpuMemory > 0) {
-        gpuMemoryYaml = `\n        nvidia.com/gpumem: ${gpuMemory}`;
-      }
-
-      // 处理 CPU 和 Memory 请求
-      // -1 表示不设置限制，不填充到模板中（空字符串）
-      let cpuRequestYaml = '';
-      let memoryRequestYaml = '';
-      if (cpuRequest && cpuRequest !== -1 && cpuRequest > 0) {
-        cpuRequestYaml = `\n        cpu: "${cpuRequest}"`;
-      }
-      if (memoryRequest && memoryRequest !== -1 && memoryRequest > 0) {
-        memoryRequestYaml = `\n        memory: ${memoryRequest}Gi`;
-      }
-
-      // HAMi label 不适用于 Managed Inference（CRD 不支持 Pod labels）
-      const hamiLabel = '';
-
-      // 处理 KV Cache 配置
-      let kvCacheSpecYaml = '';
-      if (kvCache && (kvCache.enableL1Cache || kvCache.enableL2Cache)) {
-        kvCacheSpecYaml = '\n\n  kvCacheSpec:';
-        if (kvCache.enableL1Cache) {
-          kvCacheSpecYaml += '\n    enableL1Cache: true';
-        }
-        if (kvCache.enableL2Cache) {
-          kvCacheSpecYaml += '\n    enableL2Cache: true';
-          kvCacheSpecYaml += '\n    l2CacheSpec:';
-          // 支持 tieredstorage 和 redis 两种后端
-          const l2Backend = kvCache.l2CacheBackend || 'tieredstorage';
-          kvCacheSpecYaml += `\n      l2CacheBackend: "${l2Backend}"`;
-          // 只有 redis 后端才需要 l2CacheLocalUrl
-          if (l2Backend === 'redis' && kvCache.l2CacheUrl) {
-            kvCacheSpecYaml += `\n      l2CacheLocalUrl: "${kvCache.l2CacheUrl}"`;
-          }
-        }
-      }
-
-      // 处理 Intelligent Routing 配置
-      let intelligentRoutingSpecYaml = '';
-      if (intelligentRouting && intelligentRouting.enabled) {
-        intelligentRoutingSpecYaml = '\n  intelligentRoutingSpec:';
-        intelligentRoutingSpecYaml += '\n    enabled: true';
-        intelligentRoutingSpecYaml += `\n    routingStrategy: ${intelligentRouting.strategy}`;
-      }
-
-      // 处理 Session Key 环境变量（仅在 session 或 kvaware 策略时添加）
-      let sessionKeyEnvYaml = '';
-      if (intelligentRouting && intelligentRouting.enabled && 
-          (intelligentRouting.strategy === 'session' || intelligentRouting.strategy === 'kvaware') &&
-          intelligentRouting.sessionKey) {
-        sessionKeyEnvYaml = `\n      - name: SESSION_KEY\n        value: "${intelligentRouting.sessionKey}"`;
-      }
-
-      // 处理 Auto-Scaling 配置
-      let autoScalingSpecYaml = '';
-      if (autoScaling && autoScaling.enabled) {
-        autoScalingSpecYaml = '\n\n  autoScalingSpec:';
-        autoScalingSpecYaml += `\n    minReplicaCount: ${autoScaling.minReplicaCount}`;
-        autoScalingSpecYaml += `\n    maxReplicaCount: ${autoScaling.maxReplicaCount}`;
-        autoScalingSpecYaml += `\n    pollingInterval: ${autoScaling.pollingInterval || 30}`;
-        autoScalingSpecYaml += `\n    cooldownPeriod: ${autoScaling.cooldownPeriod || 120}`;
-        autoScalingSpecYaml += `\n    scaleDownStabilizationTime: ${autoScaling.scaleDownStabilizationTime || 60}`;
-        autoScalingSpecYaml += `\n    scaleUpStabilizationTime: ${autoScaling.scaleUpStabilizationTime || 0}`;
-        
-        // Prometheus Trigger
-        if (autoScaling.prometheusTrigger) {
-          const prom = autoScaling.prometheusTrigger;
-          autoScalingSpecYaml += '\n    prometheusTrigger:';
-          autoScalingSpecYaml += `\n      serverAddress: "${prom.serverAddress}"`;
-          autoScalingSpecYaml += `\n      query: "${prom.query}"`;
-          autoScalingSpecYaml += `\n      targetValue: ${prom.targetValue}`;
-          if (prom.activationTargetValue !== undefined) {
-            autoScalingSpecYaml += `\n      activationTargetValue: ${prom.activationTargetValue}`;
-          }
-        }
-      }
-
-      // 替换模板中的占位符
-      newYamlContent = templateContent
-        .replace(/DEPLOYMENT_NAME/g, finalDeploymentTag)
-        .replace(/MODEL_NAME/g, effectiveModelName)
-        .replace(/INSTANCE_TYPE/g, instanceType)
-        .replace(/REPLICAS_COUNT/g, replicas.toString())
-        .replace(/AUTOSCALING_SPEC/g, autoScalingSpecYaml)
-        .replace(/S3_BUCKET_NAME/g, s3BucketName)
-        .replace(/AWS_REGION/g, s3Region)
-        .replace(/MODEL_LOCATION/g, modelLocation)
-        .replace(/DOCKER_IMAGE/g, dockerImage)
-        .replace(/WORKER_ARGS/g, workerArgsYaml)
-        .replace(/PORT_NUMBER/g, port.toString())
-        .replace(/CPU_REQUEST/g, cpuRequestYaml)
-        .replace(/MEMORY_REQUEST/g, memoryRequestYaml)
-        .replace(/GPU_COUNT/g, gpuCount.toString())
-        .replace(/GPU_MEMORY/g, gpuMemoryYaml)
-        .replace(/HAMI_LABEL/g, hamiLabel)
-        .replace(/KV_CACHE_SPEC/g, kvCacheSpecYaml)
-        .replace(/INTELLIGENT_ROUTING_SPEC/g, intelligentRoutingSpecYaml)
-        .replace(/SESSION_KEY_ENV/g, sessionKeyEnvYaml);
-
-      // 生成 Service YAML（仅在 external 模式下）
-      // internal 模式使用 Inference Operator 自动创建的 routing-service
-      if (serviceType === 'external') {
-        const serviceYaml = EKSServiceHelper.generateManagedInferenceService(
-          finalDeploymentTag,
-          serviceType,
-          port,
-          nlbAnnotations
-        );
-        newYamlContent += serviceYaml;
-        console.log('Generated external Service for managed inference');
-      } else {
-        console.log('Internal mode: using Inference Operator routing-service, no additional Service generated');
-      }
-
-      servEngine = 'managed-inf';
-      console.log('Generated managed inference YAML with service type:', serviceType);
-    }
-    // 处理Container部署（移除了Ollama支持）
-    else {
-      // 处理VLLM/SGLang/Custom部署
-      const parsedCommand = parseVllmCommand(deploymentCommand);
-      console.log('Parsed command:', parsedCommand);
-      
-      // 根据命令类型确定服务引擎前缀
-      if (parsedCommand.commandType === 'sglang') {
-        servEngine = 'sglang';
-      } else if (parsedCommand.commandType === 'vllm') {
-        servEngine = 'vllm';
-      } else {
-        servEngine = 'custom';  // 自定义命令使用custom前缀
-      }
-      console.log(`Using service engine: ${servEngine} for command type: ${parsedCommand.commandType}`);
-
-      // 统一使用混合调度模板
-      const templatePath = path.join(__dirname, '../templates/inference-container-hybrid-template.yaml');
-      console.log('Using unified hybrid scheduling template for all deployment types');
-      
-      const templateContent = await fs.readFile(templatePath, 'utf8');
-      
-      // 生成HuggingFace token环境变量（如果提供了token）
-      let hfTokenEnv = '';
-      if (huggingFaceToken && huggingFaceToken.trim() !== '') {
-        hfTokenEnv = `
-            - name: HUGGING_FACE_HUB_TOKEN
-              value: "${huggingFaceToken}"`;
-      }
-      
-      // 替换模板中的占位符 - 使用混合调度和Service类型
-      // 动态生成resources部分
-      const generateResourcesSection = (cpuRequest, memoryRequest, gpuCount, gpuMemory) => {
-        const limits = [`nvidia.com/gpu: ${gpuCount}`];
-        const requests = [`nvidia.com/gpu: ${gpuCount}`];
-        
-        // 如果设置了 GPU 内存（不是 -1），添加 HAMi GPU 内存配置
-        if (gpuMemory > 0) {
-          limits.push(`nvidia.com/gpumem: ${gpuMemory}`);
-          requests.push(`nvidia.com/gpumem: ${gpuMemory}`);
-        }
-        
-        if (cpuRequest > 0) {
-          limits.push(`cpu: "${cpuRequest}"`);
-          requests.push(`cpu: "${cpuRequest}"`);
-        }
-        
-        if (memoryRequest > 0) {
-          limits.push(`memory: ${memoryRequest}Gi`);
-          requests.push(`memory: ${memoryRequest}Gi`);
-        }
-        
-        return `resources:
-            limits:
-              ${limits.join('\n              ')}
-            requests:
-              ${requests.join('\n              ')}`;
-      };
-
-      const resourcesSection = generateResourcesSection(cpuRequest, memoryRequest, gpuCount, gpuMemory);
-      
-      // 生成 HAMi webhook ignore label（如果 gpuMemory 是 -1）
-      const hamiLabel = gpuMemory === -1 
-        ? '\n        hami.io/webhook: ignore' 
-        : '';
-
-      newYamlContent = templateContent
-        .replace(/SERVENGINE/g, servEngine)
-        .replace(/MODEL_TAG/g, finalDeploymentTag)
-        .replace(/REPLICAS_COUNT/g, replicas.toString())
-        .replace(/GPU_COUNT/g, gpuCount.toString())
-        .replace(/HYBRID_NODE_SELECTOR_TERMS/g, hybridNodeSelectorTerms)
-        .replace(/HF_TOKEN_ENV/g, hfTokenEnv)
-        .replace(/ENTRY_CMD/g, JSON.stringify(parsedCommand.fullCommand))
-        .replace(/DOCKER_IMAGE/g, dockerImage)
-        .replace(/PORT_NUMBER/g, port || 8000)
-        .replace(/RESOURCES_SECTION/g, resourcesSection)
-        .replace(/NLB_ANNOTATIONS/g, nlbAnnotations)
-        .replace(/HAMI_LABEL/g, hamiLabel);
-
-      // 在标准标签后面添加 Model Pool 标签
-      if (serviceType === 'modelpool') {
-        // 在 deployment metadata labels 的 deployment-tag 后添加
-        newYamlContent = newYamlContent.replace(
-          /(\s+deployment-tag: "[^"]+"\n)/,
-          `$1    model-id: "${finalDeploymentTag}"\n    deployment-type: "model-pool"\n`
-        );
-        
-        // 在 template metadata labels 的 model-type 后添加
-        newYamlContent = newYamlContent.replace(
-          /(\s+model-type: "[^"]+"\n)(\s+spec:)/,
-          `$1        model-id: "${finalDeploymentTag}"\n        business: "unassigned"\n        deployment-type: "model-pool"\n$2`
-        );
-      }
-
-      // 使用EKSServiceHelper生成Service YAML
-      if (serviceType !== 'modelpool') {
-        const serviceYaml = EKSServiceHelper.generateServiceYaml(
-          serviceType,
-          servEngine,
-          finalDeploymentTag,
-          port || 8000,
-          nlbAnnotations
-        );
-
-        if (serviceYaml) {
-          newYamlContent += '\n' + serviceYaml;
-          console.log(`Generated ${serviceType} Service YAML`);
-        } else {
-          console.log('No Service generated (Model Pool mode)');
-        }
-      }
-    }
-    
-    // 保存到项目目录中的deployments/inference文件夹
-    const deploymentsDir = path.join(__dirname, '../deployments/inference');
-    if (!fs.existsSync(deploymentsDir)) {
-      fs.mkdirSync(deploymentsDir, { recursive: true });
-    }
-    
-    const accessType = isExternal ? 'external' : 'internal';
-    const poolType = deployAsPool ? 'pool' : 'standard';
-    // 使用实际的引擎类型：container使用解析出的servEngine
-    const actualEngineType = servEngine;
-    const tempYamlPath = path.join(deploymentsDir, `${finalDeploymentTag}-${actualEngineType}-${poolType}-${accessType}.yaml`);
-    await fs.writeFile(tempYamlPath, newYamlContent);
-    
-    console.log(`Generated YAML saved to: ${tempYamlPath}`);
-    
-    // 执行kubectl apply
-    const applyOutput = await executeKubectl(`apply -f ${tempYamlPath}`);
-    
-    // 广播部署状态更新
-    const deploymentMessage = deployAsPool 
-      ? `Successfully deployed model pool: ${finalDeploymentTag}` 
-      : `Successfully deployed: ${finalDeploymentTag} (${accessType} access)`;
-      
-    broadcast({
-      type: 'deployment',
-      status: 'success',
-      message: deploymentMessage,
-      output: applyOutput
-    });
-    
-    res.json({
-      success: true,
-      message: 'Deployment successful',
-      output: applyOutput,
-      yamlPath: tempYamlPath,
-      generatedYaml: newYamlContent,
-      deploymentType: servEngine,
-      deploymentTag: finalDeploymentTag,
-      accessType
-    });
-    
-  } catch (error) {
-    console.error('Deployment error:', error);
-    
-    broadcast({
-      type: 'deployment',
-      status: 'error',
-      message: `Deployment failed: ${error.message}`
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// ========== Deploy API 已拆分并迁移至 deploymentManager.js ==========
+// POST /api/deploy/container - Container 部署 (vLLM/SGLang/Custom)
+// POST /api/deploy/managed-inference - Managed Inference 部署 (Inference Operator)
 
 // 部署绑定Service
-app.post('/api/deploy-service', async (req, res) => {
-  try {
-    const {
-      serviceName,
-      modelPool,
-      serviceType = 'external'
-    } = req.body;
-
-    console.log('Binding service deployment request:', { 
-      serviceName, 
-      modelPool, 
-      serviceType
-    });
-
-    // 获取 deployment 信息以提取 model-type 和端口
-    const deploymentOutput = await executeKubectl(`get deployment ${modelPool} -o json`);
-    const deployment = JSON.parse(deploymentOutput);
-    
-    // 从 deployment 标签中获取 model-type 和 model-id
-    const labels = deployment.metadata.labels || {};
-    const modelType = labels['model-type'] || 'unknown';
-    const modelId = labels['deployment-tag'] || modelPool;
-    
-    // 从 deployment 的容器配置中获取端口
-    const containers = deployment.spec.template.spec.containers || [];
-    const mainContainer = containers[0];
-    const containerPorts = mainContainer?.ports || [];
-    const port = containerPorts.find(p => p.name === 'http')?.containerPort || 8000;
-    
-    console.log(`Extracted from deployment ${modelPool}:`, { modelType, modelId, port });
-
-    // 使用 EKSServiceHelper 生成 Service YAML
-    const EKSServiceHelper = require('./utils/eksServiceHelper');
-    const isExternal = serviceType === 'external';
-    const nlbAnnotations = isExternal ? generateNLBAnnotations(true) : '';
-    
-    const serviceYaml = EKSServiceHelper.generateBindingService(
-      serviceName,
-      modelId,
-      modelType,
-      serviceType,
-      port,
-      nlbAnnotations
-    );
-    
-    // 保存到 deployments/inference 目录
-    const deploymentsDir = path.join(__dirname, '../deployments/inference');
-    if (!fs.existsSync(deploymentsDir)) {
-      fs.mkdirSync(deploymentsDir, { recursive: true });
-    }
-    
-    const tempYamlPath = path.join(deploymentsDir, `${serviceName}-binding-${serviceType}.yaml`);
-    await fs.writeFile(tempYamlPath, serviceYaml);
-    
-    console.log(`Generated binding service YAML saved to: ${tempYamlPath}`);
-    
-    // 执行kubectl apply
-    const applyOutput = await executeKubectl(`apply -f ${tempYamlPath}`);
-    
-    // 广播部署状态更新
-    broadcast({
-      type: 'service_deployment',
-      status: 'success',
-      message: `Successfully deployed binding service: ${serviceName}`,
-      output: applyOutput
-    });
-    
-    res.json({
-      success: true,
-      message: `Binding service ${serviceName} deployed successfully`,
-      serviceName,
-      modelId,
-      modelType,
-      serviceType
-    });
-    
-  } catch (error) {
-    console.error('Service deployment error:', error);
-    
-    broadcast({
-      type: 'service_deployment',
-      status: 'error',
-      message: `Service deployment failed: ${error.message}`
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// /api/deploy-service 已迁移至 deploymentManager.js
 
 // ========== Training APIs 已迁移至 trainingJobManager.js ==========
 // 包括: launch-*-training, *-config/save|load, training-jobs, hyperpod-jobs, rayjobs 等
 
-// 🔄 获取所有 InferenceEndpointConfig 资源
-app.get('/api/inference-endpoints', async (req, res) => {
-  try {
-    console.log('Fetching InferenceEndpointConfig resources...');
-
-    let inferenceEndpoints = [];
-    try {
-      const output = await executeKubectl('get inferenceendpointconfig -A -o json');
-      const result = JSON.parse(output);
-      inferenceEndpoints = result.items.map(endpoint => ({
-        name: endpoint.metadata.name,
-        namespace: endpoint.metadata.namespace || 'default',
-        creationTimestamp: endpoint.metadata.creationTimestamp,
-        modelName: endpoint.spec?.modelName || '-',
-        instanceType: endpoint.spec?.instanceType || '-',
-        replicas: endpoint.spec?.replicas || 0,
-        s3Bucket: endpoint.spec?.modelSourceConfig?.s3Storage?.bucketName || '-',
-        s3Region: endpoint.spec?.modelSourceConfig?.s3Storage?.region || '-',
-        modelLocation: endpoint.spec?.modelSourceConfig?.modelLocation || '-',
-        status: endpoint.status || {},
-        state: endpoint.status?.state || 'Unknown',
-        deploymentStatus: endpoint.status?.deploymentStatus?.deploymentObjectOverallState || 'Unknown',
-        availableReplicas: endpoint.status?.deploymentStatus?.status?.availableReplicas || 0,
-        totalReplicas: endpoint.status?.deploymentStatus?.status?.replicas || 0
-      }));
-    } catch (error) {
-      const optimizedMessage = optimizeErrorMessage(error.message);
-      console.log('No InferenceEndpointConfig found or error:', optimizedMessage);
-
-      // 如果是资源类型不存在，返回友好提示
-      if (error.message.includes(`doesn't have a resource type "inferenceendpointconfig"`)) {
-        return res.json({
-          success: true,
-          endpoints: [],
-          message: 'No InferenceEndpointConfig found (Inference Operator may not be installed)'
-        });
-      }
-    }
-
-    console.log(`Found ${inferenceEndpoints.length} inference endpoints:`,
-                inferenceEndpoints.map(e => e.name));
-
-    res.json({
-      success: true,
-      endpoints: inferenceEndpoints
-    });
-  } catch (error) {
-    console.error('Error fetching inference endpoints:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      endpoints: []
-    });
-  }
-});
-
-// 🔄 删除指定的 InferenceEndpointConfig
-app.delete('/api/inference-endpoints/:name', async (req, res) => {
-  try {
-    const { name } = req.params;
-    const { namespace } = req.query; // 从 query 获取 namespace，默认为 default
-    const ns = namespace || 'default';
-
-    console.log(`Deleting InferenceEndpointConfig: ${name} in namespace: ${ns}`);
-
-    const output = await executeKubectl(`delete inferenceendpointconfig ${name} -n ${ns}`);
-    console.log('Delete output:', output);
-
-    // 广播删除状态更新
-    broadcast({
-      type: 'inference_endpoint_deleted',
-      status: 'success',
-      message: `Inference endpoint "${name}" deleted successfully`,
-      endpointName: name,
-      namespace: ns
-    });
-
-    res.json({
-      success: true,
-      message: `Inference endpoint "${name}" deleted successfully`,
-      output: output
-    });
-  } catch (error) {
-    console.error('Error deleting inference endpoint:', error);
-
-    broadcast({
-      type: 'inference_endpoint_deleted',
-      status: 'error',
-      message: `Failed to delete inference endpoint: ${error.message}`
-    });
-
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// /api/inference-endpoints (GET, DELETE) 已迁移至 deploymentManager.js
 
 // Pod 日志 API 已迁移至 logStreamManager.js
+// /api/undeploy 已迁移至 deploymentManager.js
 
-// 删除部署 - 改进版本
-app.post('/api/undeploy', async (req, res) => {
-  try {
-    const { modelTag, deleteType } = req.body;
-    
-    if (!modelTag) {
-      return res.status(400).json({
-        success: false,
-        error: 'Model tag is required'
-      });
-    }
-    
-    console.log(`Undeploying deployment: ${modelTag}, type: ${deleteType}`);
-    
-    let results = [];
-    let actuallyDeleted = 0;
-    
-    // 删除Deployment
-    if (deleteType === 'all' || deleteType === 'deployment') {
-      try {
-        console.log(`Executing: kubectl delete deployment ${modelTag}`);
-        const output = await executeKubectl(`delete deployment ${modelTag}`);
-        console.log(`Delete deployment output: ${output}`);
-        
-        results.push({
-          resource: 'deployment',
-          name: modelTag,
-          success: true,
-          output: output.trim()
-        });
-        actuallyDeleted++;
-      } catch (error) {
-        console.error(`Failed to delete deployment ${modelTag}:`, error);
-        results.push({
-          resource: 'deployment',
-          name: modelTag,
-          success: false,
-          error: error.message
-        });
-      }
-    }
-    
-    // 删除对应的Service
-    if (deleteType === 'all' || deleteType === 'service') {
-      // 解析modelTag，提取servEngine和原始deploymentTag
-      // modelTag格式: "sglang-sssr-2025-10-30-08-35-05-inference"
-      // 需要提取: servEngine="sglang", originalTag="sssr-2025-10-30-08-35-05"
+// /api/deployment-details 已删除（废弃，未使用）
 
-      const possibleServices = [];
+// /api/assign-pod 已迁移至 deploymentManager.js
 
-      // 尝试解析 servEngine (vllm, sglang, 等)
-      const knownEngines = ['vllm', 'sglang', 'custom'];
-      let servEngine = null;
-      let originalTag = null;
+// /api/delete-service 已迁移至 deploymentManager.js
+// /api/scale-deployment 已迁移至 deploymentManager.js
 
-      for (const engine of knownEngines) {
-        if (modelTag.startsWith(`${engine}-`)) {
-          servEngine = engine;
-          // 去掉前缀和后缀获得原始tag
-          let remaining = modelTag.substring(engine.length + 1); // 去掉 "sglang-"
-          if (remaining.endsWith('-inference')) {
-            originalTag = remaining.substring(0, remaining.length - 10); // 去掉 "-inference"
-          } else if (remaining.endsWith('-pool')) {
-            originalTag = remaining.substring(0, remaining.length - 5); // 去掉 "-pool"
-          } else {
-            originalTag = remaining;
-          }
-          break;
-        }
-      }
+// /api/binding-services 已迁移至 deploymentManager.js
 
-      if (servEngine && originalTag) {
-        // 使用EKSServiceHelper的命名规律
-        possibleServices.push(
-          `${servEngine}-${originalTag}-nlb`,      // External LoadBalancer
-          `${servEngine}-${originalTag}-service`   // ClusterIP Service
-        );
-        console.log(`Parsed service names for deletion: servEngine=${servEngine}, originalTag=${originalTag}`);
-      } else {
-        console.error(`Failed to parse modelTag: ${modelTag}. Expected format: {engine}-{tag}-{suffix}`);
-        return res.status(400).json({
-          success: false,
-          error: `Invalid modelTag format: ${modelTag}. Cannot determine service names for deletion.`
-        });
-      }
-      
-      for (const serviceName of possibleServices) {
-        try {
-          console.log(`Executing: kubectl delete service ${serviceName}`);
-          const output = await executeKubectl(`delete service ${serviceName} --ignore-not-found=true`);
-          console.log(`Delete service output: ${output}`);
-          
-          if (!output.includes('not found')) {
-            results.push({
-              resource: 'service',
-              name: serviceName,
-              success: true,
-              output: output.trim()
-            });
-            actuallyDeleted++;
-          }
-        } catch (error) {
-          console.error(`Failed to delete service ${serviceName}:`, error);
-        }
-      }
-    }
-    
-    // 广播删除状态更新
-    broadcast({
-      type: 'undeployment',
-      status: 'success',
-      message: `Successfully deleted ${actuallyDeleted} resource(s) for ${modelTag}`,
-      results: results
-    });
-    
-    res.json({
-      success: true,
-      message: `Successfully deleted ${actuallyDeleted} resource(s)`,
-      results: results,
-      modelTag: modelTag,
-      actuallyDeleted: actuallyDeleted
-    });
-    
-  } catch (error) {
-    console.error('Undeploy error:', error);
-    
-    broadcast({
-      type: 'undeployment',
-      status: 'error',
-      message: `Failed to undeploy ${req.body.modelTag}: ${error.message}`
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// 获取部署详细信息（包含模型元数据）
-app.get('/api/deployment-details', async (req, res) => {
-  try {
-    console.log('Fetching deployment details with metadata...');
-    
-    // 获取所有deployment
-    const deploymentsOutput = await executeKubectl('get deployments -o json');
-    const deployments = JSON.parse(deploymentsOutput);
-    
-    // 获取所有service
-    const servicesOutput = await executeKubectl('get services -o json');
-    const services = JSON.parse(servicesOutput);
-    
-    // 过滤出模型相关的部署并提取元数据
-    const modelDeployments = deployments.items
-      .filter(deployment => 
-        deployment.metadata.name.includes('vllm') || 
-        deployment.metadata.name.includes('olm') ||
-        deployment.metadata.name.includes('inference')
-      )
-      .map(deployment => {
-        const labels = deployment.metadata.labels || {};
-        const appLabel = labels.app;
-        
-        // 查找对应的service
-        const matchingService = services.items.find(service => 
-          service.spec.selector?.app === appLabel
-        );
-        
-        // 从标签中提取模型信息
-        const modelType = labels['model-type'] || 'unknown';
-        const encodedModelId = labels['model-id'] || 'unknown';
-        const modelTag = labels['model-tag'] || 'unknown';
-        
-        // 确定最终的模型ID - 优先从容器命令中提取原始ID
-        let modelId = 'unknown';
-        
-        // 对于VLLM部署，从容器命令中提取原始模型ID
-        if (modelType === 'vllm') {
-          try {
-            const containers = deployment.spec?.template?.spec?.containers || [];
-            const vllmContainer = containers.find(c => c.name === 'vllm-openai');
-            if (vllmContainer && vllmContainer.command) {
-              const command = vllmContainer.command;
-              
-              // 1. 优先检查新的 vllm serve 格式
-              const serveIndex = command.findIndex(arg => arg === 'serve');
-              if (serveIndex !== -1 && serveIndex + 1 < command.length) {
-                // 检查前一个参数是否是 vllm 相关
-                if (serveIndex > 0 && command[serveIndex - 1].includes('vllm')) {
-                  const modelPath = command[serveIndex + 1];
-                  // 确保不是以 -- 开头的参数
-                  if (!modelPath.startsWith('--')) {
-                    modelId = modelPath;
-                  }
-                }
-              }
-              
-              // 2. 如果没找到，检查传统的 --model 参数
-              if (modelId === 'unknown') {
-                const modelIndex = command.findIndex(arg => arg === '--model');
-                if (modelIndex !== -1 && modelIndex + 1 < command.length) {
-                  modelId = command[modelIndex + 1]; // 获取--model参数后的值
-                }
-              }
-            }
-          } catch (error) {
-            console.log('Failed to extract model ID from VLLM command:', error.message);
-          }
-        }
-        
-        // 移除了Ollama特定的模型ID提取逻辑
-        
-        // 对于无法提取的情况，使用解码逻辑
-        if (modelId === 'unknown' && encodedModelId !== 'unknown') {
-          modelId = decodeModelIdFromLabel(encodedModelId);
-        }
-        
-        // 获取服务URL
-        let serviceUrl = '';
-        if (matchingService) {
-          const ingress = matchingService.status?.loadBalancer?.ingress?.[0];
-          if (ingress) {
-            const host = ingress.hostname || ingress.ip;
-            const port = matchingService.spec.ports?.[0]?.port || 8000;
-            serviceUrl = `http://${host}:${port}`;
-          }
-        }
-        
-        return {
-          deploymentName: deployment.metadata.name,
-          serviceName: matchingService?.metadata.name || 'N/A',
-          modelType: modelType,
-          modelId: modelId,
-          modelTag: modelTag,
-          serviceUrl: serviceUrl,
-          status: deployment.status.readyReplicas === deployment.spec.replicas ? 'Ready' : 'Pending',
-          replicas: deployment.spec.replicas,
-          readyReplicas: deployment.status.readyReplicas || 0,
-          hasService: !!matchingService,
-          isExternal: matchingService?.metadata?.annotations?.['service.beta.kubernetes.io/aws-load-balancer-scheme'] === 'internet-facing'
-        };
-      });
-    
-    console.log('Deployment details fetched:', modelDeployments.length, 'deployments');
-    res.json(modelDeployments);
-    
-  } catch (error) {
-    console.error('Deployment details fetch error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Pod分配管理API
-app.post('/api/assign-pod', async (req, res) => {
-  try {
-    const { podName, businessTag, modelId } = req.body;
-    
-    console.log('Pod assignment request:', { podName, businessTag, modelId });
-    
-    // 验证参数
-    if (!podName || !businessTag || !modelId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Missing required parameters: podName, businessTag, modelId' 
-      });
-    }
-    
-    // 验证Pod存在且属于指定模型
-    const podCheckCmd = `get pod ${podName} -o json`;
-    const podResult = await executeKubectl(podCheckCmd);
-    const pod = JSON.parse(podResult);
-    
-    if (!pod.metadata.labels?.['model-id'] || pod.metadata.labels['model-id'] !== modelId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: `Pod model-id '${pod.metadata.labels?.['model-id']}' does not match expected '${modelId}'` 
-      });
-    }
-    
-    // 执行Pod标签修改
-    const labelCmd = `label pod ${podName} business=${businessTag} --overwrite`;
-    await executeKubectl(labelCmd);
-    
-    console.log(`Pod ${podName} assigned to business: ${businessTag}`);
-    
-    // 广播Pod分配更新
-    broadcast({
-      type: 'pod_assigned',
-      status: 'success',
-      message: `Pod ${podName} assigned to ${businessTag}`,
-      podName,
-      businessTag,
-      modelId
-    });
-    
-    res.json({ 
-      success: true, 
-      message: `Pod ${podName} successfully assigned to ${businessTag}`,
-      podName,
-      businessTag
-    });
-    
-  } catch (error) {
-    console.error('Pod assignment error:', error);
-    
-    broadcast({
-      type: 'pod_assigned',
-      status: 'error',
-      message: `Failed to assign pod: ${error.message}`
-    });
-    
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Service删除API
-app.delete('/api/delete-service/:serviceName', async (req, res) => {
-  try {
-    const { serviceName } = req.params;
-    
-    console.log(`Deleting service: ${serviceName}`);
-    
-    // 1. 获取Service信息，确定对应的business标签
-    let businessTag = null;
-    try {
-      const serviceInfoCmd = `get service ${serviceName} -o json`;
-      const serviceInfo = await executeKubectl(serviceInfoCmd);
-      const service = JSON.parse(serviceInfo);
-      businessTag = service.metadata?.labels?.business;
-      console.log(`Service ${serviceName} has business tag: ${businessTag}`);
-    } catch (error) {
-      console.log(`Could not get service info for ${serviceName}, proceeding with deletion`);
-    }
-    
-    // 2. 删除Service
-    const deleteCmd = `delete service ${serviceName}`;
-    await executeKubectl(deleteCmd);
-    
-    // 3. 如果有business标签，将所有相关Pod重置为unassigned
-    if (businessTag && businessTag !== 'unassigned') {
-      try {
-        console.log(`Resetting pods with business=${businessTag} to unassigned`);
-        
-        // 获取所有带有该business标签的Pod
-        const getPodsCmd = `get pods -l business=${businessTag} -o json`;
-        const podsResult = await executeKubectl(getPodsCmd);
-        const pods = JSON.parse(podsResult);
-        
-        // 重置每个Pod的business标签
-        for (const pod of pods.items) {
-          const podName = pod.metadata.name;
-          console.log(`Resetting pod ${podName} to unassigned`);
-          const labelCmd = `label pod ${podName} business=unassigned --overwrite`;
-          await executeKubectl(labelCmd);
-        }
-        
-        console.log(`Reset ${pods.items.length} pods to unassigned`);
-      } catch (error) {
-        console.error(`Error resetting pods for business ${businessTag}:`, error);
-        // 不阻止Service删除，只记录错误
-      }
-    }
-    
-    console.log(`Service ${serviceName} deleted successfully`);
-    
-    // 广播Service删除更新
-    broadcast({
-      type: 'service_deleted',
-      status: 'success',
-      message: `Service ${serviceName} deleted successfully`,
-      serviceName,
-      businessTag,
-      resetPods: businessTag ? true : false
-    });
-    
-    res.json({ 
-      success: true, 
-      message: `Service ${serviceName} deleted successfully`,
-      serviceName,
-      resetPods: businessTag ? true : false
-    });
-    
-  } catch (error) {
-    console.error('Service deletion error:', error);
-    
-    // 广播删除失败
-    broadcast({
-      type: 'service_deleted',
-      status: 'error',
-      message: `Failed to delete service: ${error.message}`,
-      serviceName: req.params.serviceName
-    });
-    
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Deployment Scale API
-app.post('/api/scale-deployment', async (req, res) => {
-  try {
-    const { deploymentName, replicas, isModelPool } = req.body;
-
-    console.log(`Scaling deployment ${deploymentName} to ${replicas} replicas (Model Pool: ${isModelPool})`);
-
-    if (isModelPool) {
-      // Model Pool 的前置检查：如果是缩容且所有 pod 都已分配，则阻止操作
-      const deploymentInfo = await executeKubectl(`get deployment ${deploymentName} -o json`);
-      const deployment = JSON.parse(deploymentInfo);
-      const currentReplicas = deployment.spec.replicas;
-
-      if (replicas < currentReplicas) {
-        // 缩容操作，需要检查 pod 分配状态
-        const modelId = deployment.metadata.labels?.['model-id'];
-        if (modelId) {
-          const podsResult = await executeKubectl(`get pods -l model-id=${modelId} --no-headers -o custom-columns="NAME:.metadata.name,BUSINESS:.metadata.labels.business"`);
-          const podLines = podsResult.trim().split('\n').filter(line => line.trim());
-
-          // 计算 unassigned 和 assigned pods
-          let unassignedCount = 0;
-          let assignedCount = 0;
-
-          podLines.forEach(line => {
-            const parts = line.trim().split(/\s+/);
-            const business = parts[1];
-            if (!business || business === 'unassigned' || business === '<none>') {
-              unassignedCount++;
-            } else {
-              assignedCount++;
-            }
-          });
-
-          const podsToRemove = currentReplicas - replicas;
-
-          if (unassignedCount < podsToRemove) {
-            // 没有足够的 unassigned pod 可以删除
-            throw new Error(`Cannot scale down: ${assignedCount} pods are assigned to service bindings. Please unassign services before scaling down.`);
-          }
-
-          console.log(`Scale down check passed: ${unassignedCount} unassigned pods available, need to remove ${podsToRemove} pods`);
-        }
-      }
-    }
-
-    // 统一使用标准的 kubectl scale 命令
-    const scaleCmd = `scale deployment ${deploymentName} --replicas=${replicas}`;
-    await executeKubectl(scaleCmd);
-
-    console.log(`Deployment ${deploymentName} scaled successfully`);
-
-    // 广播Scale更新
-    broadcast({
-      type: 'deployment_scaled',
-      status: 'success',
-      message: `Deployment ${deploymentName} scaled to ${replicas} replicas`,
-      deploymentName,
-      replicas,
-      isModelPool
-    });
-
-    res.json({
-      success: true,
-      message: `Deployment ${deploymentName} scaled to ${replicas} replicas`,
-      deploymentName,
-      replicas
-    });
-
-  } catch (error) {
-    console.error('Deployment scale error:', error);
-
-    broadcast({
-      type: 'deployment_scaled',
-      status: 'error',
-      message: `Failed to scale deployment: ${error.message}`,
-      deploymentName: req.body.deploymentName
-    });
-
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Model Pool智能Scale处理函数 (已废弃，改用统一的kubectl scale + 前置检查)
-/*
-async function handleModelPoolScale(deploymentName, targetReplicas) {
-  // 获取当前Deployment信息
-  const deploymentInfo = await executeKubectl(`get deployment ${deploymentName} -o json`);
-  const deployment = JSON.parse(deploymentInfo);
-  const currentReplicas = deployment.spec.replicas;
-  
-  console.log(`Current replicas: ${currentReplicas}, Target: ${targetReplicas}`);
-  
-  if (targetReplicas > currentReplicas) {
-    // Scale Up: 直接增加副本数，新Pod会自动带unassigned标签
-    console.log(`Scaling up from ${currentReplicas} to ${targetReplicas}`);
-    const scaleCmd = `scale deployment ${deploymentName} --replicas=${targetReplicas}`;
-    await executeKubectl(scaleCmd);
-  } else if (targetReplicas < currentReplicas) {
-    // Scale Down: 优先删除unassigned的Pod
-    console.log(`Scaling down from ${currentReplicas} to ${targetReplicas}`);
-    
-    const podsToRemove = currentReplicas - targetReplicas;
-    console.log(`Need to remove ${podsToRemove} pods`);
-    
-    // 获取所有相关Pod
-    const modelId = deployment.metadata.labels?.['model-id'];
-    if (!modelId) {
-      throw new Error('Cannot find model-id label in deployment');
-    }
-    
-    const podsResult = await executeKubectl(`get pods -l model-id=${modelId} -o json`);
-    const pods = JSON.parse(podsResult);
-    
-    // 分类Pod：unassigned和assigned
-    const unassignedPods = pods.items.filter(pod => 
-      pod.metadata.labels?.business === 'unassigned'
-    );
-    const assignedPods = pods.items.filter(pod => 
-      pod.metadata.labels?.business !== 'unassigned'
-    );
-    
-    console.log(`Found ${unassignedPods.length} unassigned pods, ${assignedPods.length} assigned pods`);
-    
-    if (unassignedPods.length >= podsToRemove) {
-      // 有足够的unassigned Pod可以删除
-      for (let i = 0; i < podsToRemove; i++) {
-        const podName = unassignedPods[i].metadata.name;
-        console.log(`Deleting unassigned pod: ${podName}`);
-        await executeKubectl(`delete pod ${podName}`);
-      }
-      
-      // 更新Deployment副本数
-      const scaleCmd = `scale deployment ${deploymentName} --replicas=${targetReplicas}`;
-      await executeKubectl(scaleCmd);
-    } else {
-      // unassigned Pod不够，需要删除assigned Pod
-      const assignedToRemove = podsToRemove - unassignedPods.length;
-      
-      // 删除所有unassigned Pod
-      for (const pod of unassignedPods) {
-        const podName = pod.metadata.name;
-        console.log(`Deleting unassigned pod: ${podName}`);
-        await executeKubectl(`delete pod ${podName}`);
-      }
-      
-      // 警告用户需要删除assigned Pod
-      console.log(`Warning: Need to remove ${assignedToRemove} assigned pods`);
-      
-      // 删除assigned Pod (按创建时间排序，删除最新的)
-      const sortedAssignedPods = assignedPods.sort((a, b) => 
-        new Date(b.metadata.creationTimestamp) - new Date(a.metadata.creationTimestamp)
-      );
-      
-      for (let i = 0; i < assignedToRemove; i++) {
-        const podName = sortedAssignedPods[i].metadata.name;
-        const business = sortedAssignedPods[i].metadata.labels?.business;
-        console.log(`Deleting assigned pod: ${podName} (business: ${business})`);
-        await executeKubectl(`delete pod ${podName}`);
-      }
-      
-      // 更新Deployment副本数
-      const scaleCmd = `scale deployment ${deploymentName} --replicas=${targetReplicas}`;
-      await executeKubectl(scaleCmd);
-    }
-  }
-  // targetReplicas === currentReplicas 时不需要操作
-}
-*/
-
-// 业务Service列表API
-app.get('/api/binding-services', async (req, res) => {
-  try {
-    console.log('Fetching binding services...');
-
-    // 获取所有Service
-    const servicesOutput = await executeKubectl('get services -o json');
-    const services = JSON.parse(servicesOutput);
-
-    // 过滤绑定Service
-    const businessServices = services.items
-      .filter(service => service.metadata.labels?.['service-type'] === 'binding-service')
-      .map(service => ({
-        name: service.metadata.name,
-        businessTag: service.metadata.labels.business,
-        displayName: service.metadata.labels.business || service.metadata.name,
-        modelId: service.metadata.labels['model-id']
-      }));
-    
-    console.log('Business services found:', businessServices.length);
-    res.json(businessServices);
-    
-  } catch (error) {
-    console.error('Business services fetch error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-app.get('/api/deployments', async (req, res) => {
-  try {
-    console.log('Fetching deployments (including Routers)...');
-
-    // 获取 default namespace 的 deployment
-    const deploymentsOutput = await executeKubectl('get deployments -o json');
-    const defaultDeployments = JSON.parse(deploymentsOutput);
-
-    // 获取 hyperpod-inference-system namespace 的 deployment（只要 router）
-    let hyperpodDeployments = [];
-    try {
-      const hyperpodDeploymentsOutput = await executeKubectl('get deployments -n hyperpod-inference-system -o json');
-      const hyperpodDeploymentsData = JSON.parse(hyperpodDeploymentsOutput);
-      hyperpodDeployments = (hyperpodDeploymentsData.items || []).filter(dep => 
-        dep.metadata?.name?.endsWith('-default-router')
-      );
-      console.log(`Found ${hyperpodDeployments.length} hyperpod router deployments`);
-    } catch (error) {
-      console.log('No hyperpod router deployments found:', error.message);
-    }
-
-    // 合并两个 namespace 的 deployments
-    const allDeploymentsItems = [...defaultDeployments.items, ...hyperpodDeployments];
-
-    // 获取 default namespace 的 service
-    const servicesOutput = await executeKubectl('get services -o json');
-    const defaultServices = JSON.parse(servicesOutput);
-
-    // 获取 hyperpod-inference-system namespace 的 routing service
-    let hyperpodServices = [];
-    try {
-      const hyperpodServicesOutput = await executeKubectl('get services -n hyperpod-inference-system -o json');
-      const hyperpodServicesData = JSON.parse(hyperpodServicesOutput);
-      hyperpodServices = (hyperpodServicesData.items || []).filter(svc => 
-        svc.metadata?.name?.endsWith('-default-routing-service')
-      );
-      console.log(`Found ${hyperpodServices.length} hyperpod routing services`);
-    } catch (error) {
-      console.log('No hyperpod routing services found:', error.message);
-    }
-
-    // 合并两个 namespace 的 services
-    const allServices = [...defaultServices.items, ...hyperpodServices];
-
-    // 获取所有 ScaledObject
-    let scaledObjects = [];
-    try {
-      const scaledObjectsOutput = await executeKubectl('get scaledobjects.keda.sh --all-namespaces -o json');
-      const scaledObjectsData = JSON.parse(scaledObjectsOutput);
-      scaledObjects = scaledObjectsData.items || [];
-      console.log(`Found ${scaledObjects.length} ScaledObjects`);
-    } catch (error) {
-      console.log('No ScaledObjects found or KEDA not installed:', error.message);
-    }
-
-    // 显示所有deployment，不进行过滤（包含Router和hyperpod router）
-    const allDeployments = allDeploymentsItems;
-
-    // 为每个部署匹配对应的service和ScaledObject
-    const deploymentList = allDeployments.map(deployment => {
-      const appLabel = deployment.metadata.labels?.app;
-      const labels = deployment.metadata.labels || {};
-      const deploymentName = deployment.metadata.name;
-      const deploymentNamespace = deployment.metadata.namespace;
-
-      // 检测部署类型：优先通过service-type标签识别Router
-      const serviceType = labels['service-type'];
-      const deploymentType = labels['deployment-type'] || labels['model-type'];
-      const deployingService = labels['deploying-service'];
-
-      let finalDeploymentType;
-      if (serviceType === 'router') {
-        finalDeploymentType = 'Router';
-      } else if (deployingService === 'hyperpod-inference' || deploymentName.endsWith('-default-router')) {
-        finalDeploymentType = 'InferenceOperator';
-      } else if (deploymentType) {
-        finalDeploymentType = deploymentType;
-      } else {
-        finalDeploymentType = 'Others';
-      }
-
-      // 匹配对应的service
-      const matchingService = allServices.find(service => {
-        // Router的service匹配逻辑：查找包含deployment名称的service
-        if (finalDeploymentType === 'Router') {
-          return service.metadata.name.includes(deploymentName) ||
-                 service.spec.selector?.app === appLabel;
-        }
-        // 普通模型deployment的service匹配逻辑
-        return service.spec.selector?.app === appLabel;
-      });
-
-      // 匹配对应的 ScaledObject
-      const matchingScaledObject = scaledObjects.find(so => {
-        const targetName = so.spec?.scaleTargetRef?.name;
-        const targetNamespace = so.metadata?.namespace;
-        return targetName === deploymentName && targetNamespace === deploymentNamespace;
-      });
-
-      // 使用deployment名称作为modelTag
-      const modelTag = deploymentName;
-
-      // 检查是否为external访问
-      const isExternal = matchingService?.metadata?.annotations?.['service.beta.kubernetes.io/aws-load-balancer-scheme'] === 'internet-facing';
-
-      // 提取container port信息
-      const containers = deployment.spec.template.spec.containers || [];
-      const containerPorts = [];
-
-      containers.forEach(container => {
-        if (container.ports && container.ports.length > 0) {
-          container.ports.forEach(port => {
-            containerPorts.push({
-              containerPort: port.containerPort,
-              protocol: port.protocol || 'TCP',
-              name: port.name || 'http'
-            });
-          });
-        }
-      });
-
-      return {
-        modelTag,
-        deploymentType: finalDeploymentType,  // Router | VLLM | Others 等
-        deploymentName: deployment.metadata.name,
-        serviceName: matchingService?.metadata.name || 'N/A',
-        replicas: deployment.spec.replicas,
-        readyReplicas: deployment.status.readyReplicas || 0,
-        status: deployment.status.readyReplicas === deployment.spec.replicas ? 'Ready' : 'Pending',
-        createdAt: deployment.metadata.creationTimestamp,
-        hasService: !!matchingService,
-        serviceType: matchingService?.spec.type || 'N/A',
-        isExternal: isExternal,
-        externalIP: matchingService?.status?.loadBalancer?.ingress?.[0]?.hostname ||
-                   matchingService?.status?.loadBalancer?.ingress?.[0]?.ip || 'Pending',
-        port: matchingService?.spec?.ports?.[0]?.port || '8000',  // Service端口
-        containerPorts: containerPorts,  // 新增：container端口信息
-        labels: labels,  // 添加标签信息供前端使用
-        // Router专用字段
-        isRouter: finalDeploymentType === 'Router',
-        // ScaledObject 信息
-        scaledObject: matchingScaledObject ? {
-          name: matchingScaledObject.metadata.name,
-          namespace: matchingScaledObject.metadata.namespace,
-          minReplicas: matchingScaledObject.spec.minReplicaCount,
-          maxReplicas: matchingScaledObject.spec.maxReplicaCount,
-          ready: matchingScaledObject.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True',
-          active: matchingScaledObject.status?.conditions?.find(c => c.type === 'Active')?.status === 'True'
-        } : null
-      };
-    });
-    
-    console.log('Deployments fetched:', deploymentList.length, 'deployments (including Routers)');
-    res.json(deploymentList);
-    
-  } catch (error) {
-    console.error('Deployments fetch error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 测试模型API（生成cURL命令）
-app.post('/api/test-model', async (req, res) => {
-  const { serviceUrl, payload } = req.body;
-  
-  try {
-    let parsedPayload;
-    
-    try {
-      parsedPayload = JSON.parse(payload);
-    } catch (error) {
-      return res.status(400).json({ error: 'Invalid JSON payload' });
-    }
-    
-    const curlCommand = `curl -X POST "${serviceUrl}" \\
-  -H "Content-Type: application/json" \\
-  -d '${JSON.stringify(parsedPayload, null, 2)}'`;
-    
-    res.json({
-      curlCommand,
-      fullUrl: serviceUrl,
-      message: 'Use the curl command to test your model'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// /api/deployments 已迁移至 deploymentManager.js
+// /api/test-model 已迁移至 deploymentManager.js
 
 // WebSocket连接处理 - 优化版本，减少日志污染
 wss.on('connection', (ws) => {
@@ -2527,7 +946,7 @@ function stopAllLogStreams(ws) {
   }
 }
 
-const S3StorageManager = require('./s3-storage-manager');
+const S3StorageManager = require('./s3StorageManager');
 const s3StorageManager = new S3StorageManager();
 
 // S3存储管理API
@@ -2765,8 +1184,8 @@ app.get('/api/cluster/cluster-available-instance', async (req, res) => {
 // 集群创建日志 API 已由 multiClusterAPIs 模块处理（见下方 /api/cluster/logs/:step 和 /api/cluster/logs-history）
 // ==================== 多集群管理 API ====================
 // 引入多集群管理模块
-const MultiClusterAPIs = require('./multi-cluster-apis');
-const MultiClusterStatus = require('./multi-cluster-status');
+const MultiClusterAPIs = require('./multiClusterApis');
+const MultiClusterStatus = require('./multiClusterStatus');
 
 const multiClusterAPIs = new MultiClusterAPIs();
 const multiClusterStatus = new MultiClusterStatus();
@@ -2803,7 +1222,7 @@ console.log('Multi-cluster management APIs loaded');
 // 引入集群管理工具
 const CloudFormationManager = require('./utils/cloudFormationManager');
 const ClusterDependencyManager = require('./utils/clusterDependencyManager');
-const ClusterManager = require('./cluster-manager');
+const ClusterManager = require('./clusterManager');
 const clusterManager = new ClusterManager();
 
 // 初始化 HyperPod API 管理模块
@@ -2865,6 +1284,17 @@ trainingJobManager.initialize({
 app.use('/api', trainingJobManager.router);
 
 console.log('Training Job Manager loaded');
+
+// 初始化 Deployment 管理模块
+deploymentManager.initialize({
+  broadcast,
+  executeKubectl
+});
+
+// 注册 Deployment API 路由
+app.use('/api', deploymentManager.router);
+
+console.log('Deployment Manager loaded');
 
 // CIDR生成相关API
 app.get('/api/cluster/generate-cidr', async (req, res) => {
@@ -3155,7 +1585,7 @@ app.get('/api/cluster/subnets', async (req, res) => {
 // 🎨 AWS Instance Types API for Advanced Scaling (Cache-based, no fallbacks)
 app.get('/api/aws/instance-types', async (req, res) => {
   try {
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
     const activeClusterName = clusterManager.getActiveCluster();
 
@@ -3176,7 +1606,7 @@ app.get('/api/aws/instance-types', async (req, res) => {
 // 🎨 AWS Instance Types Refresh API (Manual cache update)
 app.post('/api/aws/instance-types/refresh', async (req, res) => {
   try {
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
     const activeClusterName = clusterManager.getActiveCluster();
 
@@ -3206,7 +1636,7 @@ app.post('/api/aws/instance-types/by-subnet', async (req, res) => {
   try {
     const { subnetId } = req.body;
 
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
     const activeClusterName = clusterManager.getActiveCluster();
 
@@ -3245,7 +1675,7 @@ const HyperPodKarpenterInstaller = require('./utils/hyperpodKarpenterInstaller')
 app.post('/api/cluster/karpenter/install', async (req, res) => {
   try {
     const { clusterTag } = req.body;
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
 
     // 如果没有提供clusterTag，使用活跃集群
@@ -3305,7 +1735,7 @@ app.post('/api/cluster/karpenter/install', async (req, res) => {
 // 检查 Karpenter 状态
 app.get('/api/cluster/karpenter/status', async (req, res) => {
   try {
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
     const activeCluster = clusterManager.getActiveCluster();
 
@@ -3383,7 +1813,7 @@ app.get('/api/cluster/karpenter/status', async (req, res) => {
 // 获取 Karpenter 节点
 app.get('/api/cluster/karpenter/nodes', async (req, res) => {
   try {
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
     const activeCluster = clusterManager.getActiveCluster();
 
@@ -3442,7 +1872,7 @@ app.get('/api/cluster/karpenter/nodes', async (req, res) => {
 app.delete('/api/cluster/karpenter/uninstall', async (req, res) => {
   try {
     const { clusterTag } = req.body;
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
 
     // 如果没有提供clusterTag，使用活跃集群
@@ -4428,68 +2858,7 @@ console.log('KEDA Auto Scaling APIs loaded');
 
 const RoutingManager = require('./utils/routingManager');
 
-// 获取可用的SGLang部署列表 (用于Router配置)
-app.get('/api/sglang-deployments', async (req, res) => {
-  try {
-    const { execSync } = require('child_process');
-
-    // 获取所有SGLang类型的deployment
-    const deployCmd = 'kubectl get deployments -l model-type=sglang -o json';
-    const deployResult = execSync(deployCmd, { encoding: 'utf8' });
-    const deployments = JSON.parse(deployResult);
-
-    // 获取所有SGLang类型的service
-    const serviceCmd = 'kubectl get services -l model-type=sglang -o json';
-    const serviceResult = execSync(serviceCmd, { encoding: 'utf8' });
-    const services = JSON.parse(serviceResult);
-
-    // 匹配deployment和service，只返回ClusterIP类型的
-    const availableDeployments = [];
-
-    deployments.items.forEach(deployment => {
-      const deploymentTag = deployment.metadata.labels['deployment-tag'];
-      if (!deploymentTag) return;
-
-      // 找到对应的service
-      const matchingService = services.items.find(service =>
-        service.metadata.labels['deployment-tag'] === deploymentTag
-      );
-
-      if (matchingService && matchingService.spec.type === 'ClusterIP') {
-        const port = matchingService.spec.ports[0]?.port || 8000;
-
-        availableDeployments.push({
-          deploymentTag,
-          name: deployment.metadata.name,
-          serviceName: matchingService.metadata.name,
-          port: port,
-          ready: deployment.status.readyReplicas || 0,
-          total: deployment.status.replicas || 0,
-          status: (deployment.status.readyReplicas === deployment.status.replicas &&
-                   deployment.status.readyReplicas > 0) ? 'Ready' : 'NotReady',
-          creationTime: deployment.metadata.creationTimestamp
-        });
-      }
-    });
-
-    // 按创建时间排序，最新的在前面
-    availableDeployments.sort((a, b) => new Date(b.creationTime) - new Date(a.creationTime));
-
-    res.json({
-      success: true,
-      deployments: availableDeployments,
-      total: availableDeployments.length
-    });
-
-  } catch (error) {
-    console.error('Error fetching SGLang deployments:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      deployments: []
-    });
-  }
-});
+// /api/sglang-deployments 已迁移至 deploymentManager.js
 
 // 部署 Advanced Scaling 配置
 app.post('/api/deploy-advanced-scaling', async (req, res) => {

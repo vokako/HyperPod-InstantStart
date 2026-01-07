@@ -252,7 +252,7 @@ class ClusterStatusV2 {
    */
   async getHyperPodCapacityTypeMap() {
     try {
-      const ClusterManager = require('./cluster-manager');
+      const ClusterManager = require('./clusterManager');
       const AWSHelpers = require('./utils/awsHelpers');
       const fs = require('fs');
       const path = require('path');

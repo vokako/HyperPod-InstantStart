@@ -341,7 +341,7 @@ router.post('/mlflow-sync', async (req, res) => {
       '--config-file', tempConfigPath,
       '--experiment-name', experimentIdentifier
     ], {
-      cwd: __dirname,
+      cwd: '/tmp',  // 避免 MLflow 在 server/ 目录创建 mlruns/
       env: { ...process.env }
     });
 
@@ -525,7 +525,7 @@ router.get('/training-history', async (req, res) => {
     const scriptPath = path.join(__dirname, '../mlflow/get_training_history.py');
 
     const pythonProcess = spawn(pythonPath, [scriptPath, mlflowConfig.tracking_uri], {
-      cwd: __dirname,
+      cwd: '/tmp',  // 避免 MLflow 在 server/ 目录创建 mlruns/
       env: { ...process.env }
     });
 
@@ -603,7 +603,7 @@ router.get('/training-history', async (req, res) => {
 router.get('/cluster/mlflow-info', (req, res) => {
   try {
     // 使用多集群管理器获取活跃集群的 MLflow 信息
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const clusterManager = new ClusterManager();
     const activeCluster = clusterManager.getActiveCluster();
 

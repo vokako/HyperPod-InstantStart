@@ -15,11 +15,19 @@ export const fetchDeployments = createAsyncThunk(
 );
 
 // 异步操作：部署模型
+// @deprecated - 组件已直接调用 API:
+//   ConfigPanel.js -> /api/deploy/container
+//   ManagedInferencePanel.js -> /api/deploy/managed-inference
 export const deployModel = createAsyncThunk(
   'inference/deployModel',
   async (deploymentConfig, { rejectWithValue }) => {
     try {
-      const response = await fetch('/api/deploy', {
+      // 根据 deploymentType 选择 API 端点
+      const apiEndpoint = deploymentConfig.deploymentType === 'managed-inference'
+        ? '/api/deploy/managed-inference'
+        : '/api/deploy/container';
+
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(deploymentConfig),

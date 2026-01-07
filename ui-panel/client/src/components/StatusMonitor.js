@@ -350,7 +350,13 @@ const StatusMonitor = ({ pods, services, businessServices: propBusinessServices,
 
         const currentBusiness = pod.metadata.labels?.business || 'unassigned';
         const podName = pod.metadata.name;
+        const podModelId = pod.metadata.labels?.['model-id'];
         const isAssigning = assigningPods.has(podName);
+
+        // 只显示与当前 Pod 的 model-id 匹配的 services
+        const matchingServices = businessServices.filter(
+          service => service.modelId === podModelId
+        );
 
         return (
           <Select
@@ -364,7 +370,7 @@ const StatusMonitor = ({ pods, services, businessServices: propBusinessServices,
             <Option value="unassigned">
               <Text type="secondary">Unassigned</Text>
             </Option>
-            {businessServices.map(service => (
+            {matchingServices.map(service => (
               <Option key={service.businessTag} value={service.businessTag}>
                 <Text>{service.displayName}</Text>
               </Option>

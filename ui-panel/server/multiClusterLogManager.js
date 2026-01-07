@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const ClusterManager = require('./cluster-manager');
+const ClusterManager = require('./clusterManager');
 
 class MultiClusterLogManager {
   constructor(clusterTag) {

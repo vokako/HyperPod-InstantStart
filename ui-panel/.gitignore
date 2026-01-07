@@ -58,3 +58,7 @@ venv/
 # ENV/
 # env.bak/
 venv.bak/
+
+# MLflow local storage
+mlruns/
+server/mlruns/

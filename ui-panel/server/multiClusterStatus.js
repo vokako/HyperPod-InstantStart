@@ -1,7 +1,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { exec } = require('child_process');
-const ClusterManager = require('./cluster-manager');
+const ClusterManager = require('./clusterManager');
 
 class MultiClusterStatus {
   constructor() {

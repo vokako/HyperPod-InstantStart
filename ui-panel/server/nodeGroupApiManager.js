@@ -47,7 +47,7 @@ function initialize(broadcastFn, clusterMgr) {
  */
 router.get('/nodegroups', async (req, res) => {
   try {
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const localClusterManager = new ClusterManager();
     const activeClusterName = localClusterManager.getActiveCluster();
 
@@ -191,7 +191,7 @@ router.put('/nodegroups/:name/scale', async (req, res) => {
     const { name } = req.params;
     const { minSize, maxSize, desiredSize } = req.body;
 
-    const ClusterManager = require('./cluster-manager');
+    const ClusterManager = require('./clusterManager');
     const localClusterManager = new ClusterManager();
     const activeClusterName = localClusterManager.getActiveCluster();
 
