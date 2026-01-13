@@ -1453,6 +1453,8 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         </Button>
       </div>
 
+      {/* HyperPod Instance Groups - 通过环境变量控制显示 */}
+      {process.env.REACT_APP_SHOW_HYPERPOD_INSTANCE_GROUPS !== 'false' && (
       <Card
         title="HyperPod Instance Groups"
         style={{ marginBottom: '16px' }}
@@ -1600,6 +1602,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           style={{ minHeight: hyperPodGroups.length === 0 ? '60px' : 'auto' }}
         />
       </Card>
+      )}
 
       {/* HyperPod Karpenter Resources */}
       <Card
