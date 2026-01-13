@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Layout, Row, Col, Card, message, Tabs, Space, Badge, Button } from 'antd';
 import { useDispatch, useSelector } from 'react-redux';
-import { ContainerOutlined, ApiOutlined, RocketOutlined, ExperimentOutlined, DatabaseOutlined, CloudServerOutlined, SettingOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { ContainerOutlined, ApiOutlined, RocketOutlined, ExperimentOutlined, DatabaseOutlined, SettingOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import AppHeader from './components/AppHeader';
 import { refreshAllAppStatus } from './store/slices/appStatusSlice';
 import { selectAppPods, selectAppServices } from './store/selectors';
 import ThemeProvider from './components/ThemeProvider';
@@ -813,62 +814,13 @@ function App() {
     }
   };
 
-  const theme = getActiveTheme();
-
   return (
     <ThemeProvider>
       <Layout className="app-layout">
-        <Header
-          className={`theme-header ${theme.name === 'aws' ? 'aws-header' : ''}`}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0 24px'
-          }}
-        >
-          <h1 className="theme-header-title">
-            <CloudServerOutlined style={{ marginRight: '8px' }} />
-            HyperPod InstantStart
-            <span className="theme-header-subtitle">
-              Unified Platform
-            </span>
-            <span style={{
-              fontSize: '11px',
-              color: '#d9d9d9',
-              marginLeft: '12px',
-              fontWeight: 'normal'
-            }}>
-              Version: {process.env.REACT_APP_VERSION || 'dev'}
-            </span>
-          </h1>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            {/* 已禁用：使用新的 resourceEventBus 刷新机制 (2025-11-22) */}
-            {/* <GlobalRefreshButtonRedux
-              showAutoRefresh={true}
-              autoRefreshOptions={{
-                defaultEnabled: true,
-                defaultInterval: 30000
-              }}
-              size="small"
-            /> */}
-            <div style={{
-              fontSize: '12px',
-              lineHeight: '1',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}>
-              <span style={{ color: '#d9d9d9' }}>
-                {connectionStatus === 'connected' ? 'Connected' : 
-                 connectionStatus === 'connecting' ? 'Connecting' :
-                 connectionStatus === 'disconnected' ? 'Disconnected' : 'Error'}
-              </span>
-              {getConnectionStatusIndicator()}
-            </div>
-          </div>
-        </Header>
+        <AppHeader
+          connectionStatus={connectionStatus}
+          getConnectionStatusIndicator={getConnectionStatusIndicator}
+        />
       
       <Content className="app-content">
         {/* 主标签切换区域 */}
