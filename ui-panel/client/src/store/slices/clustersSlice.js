@@ -42,11 +42,12 @@ export const switchCluster = createAsyncThunk(
 
       if (!response.ok) throw new Error('Failed to switch cluster');
 
-      // 获取集群详细信息
-      const clusterInfoResponse = await fetch(`/api/cluster/info?clusterTag=${clusterTag}`);
-      if (!clusterInfoResponse.ok) throw new Error('Failed to fetch cluster info');
+      // 页面会立即 reload，不需要获取集群信息
+      // const clusterInfoResponse = await fetch(`/api/cluster/info?clusterTag=${clusterTag}`);
+      // if (!clusterInfoResponse.ok) throw new Error('Failed to fetch cluster info');
+      // return await clusterInfoResponse.json();
 
-      return await clusterInfoResponse.json();
+      return { clusterTag };
     } catch (error) {
       return rejectWithValue(error.message);
     }
