@@ -34,7 +34,6 @@ import {
 } from '@ant-design/icons';
 import NodeGroupManager from './NodeGroupManagerRedux';
 import EksClusterCreationPanel from './EksClusterCreationPanel';
-import CreateClusterDeprecated from './CreateClusterDeprecated';
 import {
   fetchClusters,
   fetchClusterDetails,
@@ -645,16 +644,6 @@ const ClusterManagementRedux = () => {
                 ),
                 children: <EksClusterCreationPanel />
               },
-              ...(process.env.REACT_APP_SHOW_DEPRECATED_CREATE_CLUSTER === 'true' ? [{
-                key: 'create',
-                label: 'CreateCluster[DEPRECATED]',
-                children: (
-                  <CreateClusterDeprecated
-                    form={form}
-                    defaultConfig={defaultConfig}
-                  />
-                )
-              }] : [])
             ]}
           />
         </Card>
