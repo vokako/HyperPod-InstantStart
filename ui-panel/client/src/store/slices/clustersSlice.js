@@ -14,21 +14,6 @@ export const fetchClusters = createAsyncThunk(
   }
 );
 
-// 异步操作：获取集群详情
-export const fetchClusterDetails = createAsyncThunk(
-  'clusters/fetchClusterDetails',
-  async (clusterTag, { rejectWithValue }) => {
-    try {
-      const response = await fetch(`/api/cluster/info${clusterTag ? `?clusterTag=${clusterTag}` : ''}`);
-      if (!response.ok) throw new Error('Failed to fetch cluster details');
-      const result = await response.json();
-      return result.success ? result : result;
-    } catch (error) {
-      return rejectWithValue(error.message);
-    }
-  }
-);
-
 // 异步操作：切换活跃集群
 export const switchCluster = createAsyncThunk(
   'clusters/switchCluster',
@@ -41,11 +26,6 @@ export const switchCluster = createAsyncThunk(
       });
 
       if (!response.ok) throw new Error('Failed to switch cluster');
-
-      // 页面会立即 reload，不需要获取集群信息
-      // const clusterInfoResponse = await fetch(`/api/cluster/info?clusterTag=${clusterTag}`);
-      // if (!clusterInfoResponse.ok) throw new Error('Failed to fetch cluster info');
-      // return await clusterInfoResponse.json();
 
       return { clusterTag };
     } catch (error) {
@@ -96,7 +76,6 @@ const clustersSlice = createSlice({
   initialState: {
     list: [],
     activeCluster: null,
-    clusterDetails: null,
     dependencies: {
       configured: false,
       components: {
@@ -130,11 +109,8 @@ const clustersSlice = createSlice({
       })
       .addCase(fetchClusters.fulfilled, (state, action) => {
         state.list = action.payload.clusters || action.payload;
-        // 如果 API 返回了 activeCluster，则设置它
         if (action.payload.activeCluster) {
           state.activeCluster = action.payload.activeCluster;
-          // 清除之前的集群详情，让组件重新获取
-          state.clusterDetails = null;
         }
         state.loading = false;
       })
@@ -143,22 +119,13 @@ const clustersSlice = createSlice({
         state.error = action.payload;
       })
 
-    // 处理获取集群详情
-      .addCase(fetchClusterDetails.fulfilled, (state, action) => {
-        state.clusterDetails = action.payload;
-      })
-      .addCase(fetchClusterDetails.rejected, (state, action) => {
-        console.error('Failed to fetch cluster details:', action.payload);
-      })
-
     // 处理切换活跃集群
       .addCase(switchCluster.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(switchCluster.fulfilled, (state, action) => {
-        state.activeCluster = action.meta.arg; // clusterTag
-        state.clusterDetails = action.payload;
+        state.activeCluster = action.meta.arg;
         state.loading = false;
       })
       .addCase(switchCluster.rejected, (state, action) => {
@@ -169,6 +136,10 @@ const clustersSlice = createSlice({
     // 处理依赖状态检查
       .addCase(checkDependenciesStatus.fulfilled, (state, action) => {
         state.dependencies = action.payload.dependencies;
+        // 当状态不再是 configuring 时，才关闭 loading 状态
+        if (action.payload.dependencies?.status !== 'configuring') {
+          state.configuring = false;
+        }
       })
 
     // 处理依赖配置
@@ -176,7 +147,8 @@ const clustersSlice = createSlice({
         state.configuring = true;
       })
       .addCase(configureDependencies.fulfilled, (state) => {
-        state.configuring = false;
+        // 不在这里设置 configuring = false
+        // 等 checkDependenciesStatus 返回实际状态后再决定
       })
       .addCase(configureDependencies.rejected, (state, action) => {
         state.configuring = false;

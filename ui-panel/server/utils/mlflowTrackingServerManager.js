@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs-extra');
 const path = require('path');
-const { getCurrentRegion, getCurrentS3Bucket, getDevAdminRoleArn, getCurrentAccountId } = require('./awsHelpers');
+const { getCurrentRegion, getCurrentAccountId } = require('./awsHelpers');
 
 class MLflowTrackingServerManager {
   constructor() {
@@ -31,8 +31,8 @@ class MLflowTrackingServerManager {
       activeCluster = this.getActiveCluster();
     }
     
-    const initEnvsPath = path.join(this.managedClustersPath, activeCluster, 'config/init_envs');
-    const cmd = `source ${initEnvsPath} && echo $${varName}`;
+    const clusterEnvsPath = path.join(this.managedClustersPath, activeCluster, 'config/cluster_envs');
+    const cmd = `source ${clusterEnvsPath} && echo $${varName}`;
     
     try {
       const result = execSync(cmd, { shell: '/bin/bash', encoding: 'utf8' });
@@ -207,8 +207,8 @@ class MLflowTrackingServerManager {
       console.log('Configuring MLflow authentication...');
       
       const activeCluster = this.getActiveCluster();
-      const region = await getCurrentRegion();
-      const accountId = await getCurrentAccountId();
+      const region = getCurrentRegion();
+      const accountId = getCurrentAccountId();
       const eksClusterName = await this.getEnvVar('EKS_CLUSTER_NAME', activeCluster);
       const clusterTag = await this.getEnvVar('CLUSTER_TAG', activeCluster);
       
@@ -318,6 +318,7 @@ class MLflowTrackingServerManager {
             "sagemaker:ListTrialComponents",
             "sagemaker:AddTags",
             "sagemaker:ListTags",
+            "sagemaker:CallMlflowAppApi",
             "sagemaker-mlflow:*"
           ],
           "Resource": "*"

@@ -1,5 +1,5 @@
-mlflow==3.0.0
-sagemaker-mlflow==0.1.0
+mlflow>=3.0.0
+sagemaker-mlflow>=0.2.0
 pandas
 boto3
 mcp>=1.0.0

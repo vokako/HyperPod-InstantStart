@@ -18,15 +18,6 @@ class ClusterManager {
     }
   }
 
-  // 从 init_envs 内容提取集群标识
-  extractClusterTag(initEnvsContent) {
-    const match = initEnvsContent.match(/export CLUSTER_TAG=(.+)/);
-    if (!match) {
-      throw new Error('CLUSTER_TAG not found in configuration');
-    }
-    return match[1].replace(/['"]/g, '').trim();
-  }
-
   // 获取集群目录路径
   getClusterDir(clusterTag) {
     return path.join(this.baseDir, clusterTag);
@@ -131,36 +122,10 @@ class ClusterManager {
     return clusterInfo;
   }
 
-  // 备份生成的配置文件
-  backupGeneratedFiles(clusterTag, step) {
-    const configDir = this.getClusterConfigDir(clusterTag);
-    
-    const filesToBackup = {
-      'step1': ['stack_envs'],
-      'step2': ['mlflow-server-info.json']
-    };
-
-    const files = filesToBackup[step] || [];
-    
-    for (const file of files) {
-      const sourcePath = path.join(this.cliDir, file);
-      const targetPath = path.join(configDir, file);
-      
-      if (fs.existsSync(sourcePath)) {
-        try {
-          fs.copyFileSync(sourcePath, targetPath);
-          console.log(`Backed up ${file} for cluster ${clusterTag}`);
-        } catch (error) {
-          console.warn(`Failed to backup ${file}:`, error.message);
-        }
-      }
-    }
-  }
-
   // 恢复集群配置到 CLI 目录
   restoreClusterConfig(clusterTag) {
     const configDir = this.getClusterConfigDir(clusterTag);
-    const filesToRestore = ['init_envs', 'stack_envs', 'mlflow-server-info.json'];
+    const filesToRestore = ['cluster_envs', 'mlflow-server-info.json'];
     
     for (const file of filesToRestore) {
       const sourcePath = path.join(configDir, file);
@@ -250,22 +215,9 @@ class ClusterManager {
 
   // 保存导入集群配置
   async saveImportConfig(clusterTag, importConfig, accessInfo = null, detectedState = null) {
-    const configDir = this.getClusterConfigDir(clusterTag);
-    const initEnvsPath = path.join(configDir, 'init_envs');
-    
-    // 生成init_envs内容
-    let content = '#!/bin/bash\n\n';
-    content += '# Imported cluster configuration\n';
-    
-    Object.entries(importConfig).forEach(([key, value]) => {
-      content += `export ${key}="${value}"\n`;
-    });
-    
-    fs.writeFileSync(initEnvsPath, content);
-    console.log(`Saved import config for cluster: ${clusterTag}`);
+    const metadataDir = this.getClusterMetadataDir(clusterTag);
     
     // 创建导入元数据
-    const metadataDir = this.getClusterMetadataDir(clusterTag);
     const importMetadata = {
       type: 'imported',
       importedAt: new Date().toISOString(),
@@ -286,19 +238,14 @@ class ClusterManager {
       JSON.stringify(importMetadata, null, 2)
     );
     
-    // 创建cluster_info.json以便在集群列表中显示
+    // 创建cluster_info.json
     const clusterInfo = {
       clusterTag,
       status: 'imported',
+      region: importConfig.AWS_REGION,
       lastModified: new Date().toISOString(),
-      config: {
-        clusterTag,
-        awsRegion: importConfig.AWS_REGION,
-        eksClusterName: importConfig.EKS_CLUSTER_NAME,
-        clusterType: 'imported'
-      },
       type: 'imported',
-      // 添加检测到的状态信息
+      source: 'ui-panel-import',
       dependencies: detectedState?.dependencies ? {
         configured: detectedState.dependencies.configured,
         detected: true,
@@ -318,7 +265,13 @@ class ClusterManager {
         detected: detectedState?.nodeGroups || [],
         userCreated: []
       },
-      detectedAt: detectedState?.detectedAt || null
+      detectedAt: detectedState?.detectedAt || null,
+      eksCluster: {
+        name: importConfig.EKS_CLUSTER_NAME,
+        arn: null,
+        vpcId: null,
+        securityGroupId: null
+      }
     };
     
     fs.writeFileSync(
@@ -326,27 +279,18 @@ class ClusterManager {
       JSON.stringify(clusterInfo, null, 2)
     );
     
-    console.log(`Created cluster info for imported cluster: ${clusterTag} with detected state`);
+    // 生成 cluster_envs 文件
+    const EnvInjector = require('./utils/envInjector');
+    EnvInjector.updateClusterEnvFile(clusterTag);
+    
+    console.log(`Saved import config and generated cluster_envs for cluster: ${clusterTag}`);
   }
 
   // 保存基础导入配置（不包含检测状态）
   async saveImportConfigBasic(clusterTag, importConfig, accessInfo = null, hasHyperPod = false) {
-    const configDir = this.getClusterConfigDir(clusterTag);
-    const initEnvsPath = path.join(configDir, 'init_envs');
-    
-    // 生成init_envs内容（不加引号，与创建集群保持一致）
-    let content = '#!/bin/bash\n\n';
-    content += '# Imported cluster configuration\n';
-    
-    Object.entries(importConfig).forEach(([key, value]) => {
-      content += `export ${key}=${value}\n`;
-    });
-    
-    fs.writeFileSync(initEnvsPath, content);
-    console.log(`Saved basic import config for cluster: ${clusterTag}`);
+    const metadataDir = this.getClusterMetadataDir(clusterTag);
     
     // 创建导入元数据
-    const metadataDir = this.getClusterMetadataDir(clusterTag);
     const importMetadata = {
       type: 'imported',
       importedAt: new Date().toISOString(),
@@ -370,15 +314,13 @@ class ClusterManager {
     // 创建基础cluster_info.json
     const clusterInfo = {
       clusterTag,
-      region: importConfig.AWS_REGION,  // 统一region字段位置
+      region: importConfig.AWS_REGION,
       status: 'imported',
       type: 'imported',
-      createdAt: new Date().toISOString(),  // 统一使用createdAt
+      createdAt: new Date().toISOString(),
       lastModified: new Date().toISOString(),
-      source: 'ui-panel-import',  // 统一source字段
-      // 根据是否有HyperPod设置不同的依赖状态
-      dependencies: hasHyperPod ? {
-        // 有HyperPod的导入集群：不需要配置依赖
+      source: 'ui-panel-import',
+      dependencies: {
         configured: false,
         status: 'pending',
         lastAttempt: null,
@@ -390,19 +332,12 @@ class ClusterManager {
           kuberayOperator: false,
           certManager: false
         }
-      } : {
-        // 纯EKS导入集群：需要配置依赖
-        configured: false,
-        status: 'pending',
-        lastAttempt: null,
-        lastSuccess: null,
-        components: {
-          helmDependencies: false,
-          nlbController: false,
-          s3CsiDriver: false,
-          kuberayOperator: false,
-          certManager: false
-        }
+      },
+      eksCluster: {
+        name: importConfig.EKS_CLUSTER_NAME,
+        arn: null,
+        vpcId: null,
+        securityGroupId: null
       }
     };
     
@@ -411,7 +346,11 @@ class ClusterManager {
       JSON.stringify(clusterInfo, null, 2)
     );
     
-    console.log(`Created basic cluster info for imported cluster: ${clusterTag} (hasHyperPod: ${hasHyperPod})`);
+    // 生成 cluster_envs 文件
+    const EnvInjector = require('./utils/envInjector');
+    EnvInjector.updateClusterEnvFile(clusterTag);
+    
+    console.log(`Created basic cluster info and cluster_envs for imported cluster: ${clusterTag} (hasHyperPod: ${hasHyperPod})`);
   }
 
   // 更新导入配置包含检测状态
@@ -487,11 +426,6 @@ class ClusterManager {
     const configDir = this.getClusterConfigDir(clusterTag);
     const metadataDir = this.getClusterMetadataDir(clusterTag);
     
-    // 生成init_envs文件
-    const initEnvsContent = this.generateInitEnvsContent(clusterConfig, stackResult.stackName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
-    fs.writeFileSync(initEnvsPath, initEnvsContent);
-    
     // 保存创建元数据
     const creationMetadata = {
       type: 'created',
@@ -502,7 +436,7 @@ class ClusterManager {
       cloudFormation: {
         stackName: stackResult.stackName,
         stackId: stackResult.stackId,
-        templateFile: '1-main-stack-eks-control.yaml',
+        templateFile: '1-eks-full-stack.yaml',
         status: 'CREATE_IN_PROGRESS',
         parameters: stackResult.parameters
       }
@@ -525,37 +459,6 @@ class ClusterManager {
     console.log(`✅ Saved creation config for cluster: ${clusterTag}`);
     
     console.log(`Saved creation config for cluster: ${clusterTag}`);
-  }
-
-  // 生成init_envs文件内容
-  generateInitEnvsContent(config, stackName = null) {
-    const { clusterTag, awsRegion, gpuInstanceType, gpuInstanceCount, gpuCapacityAz } = config;
-    
-    return `#!/bin/bash
-
-# EKS Cluster Configuration - Generated by UI Panel
-export CLUSTER_TAG=${clusterTag}
-export AWS_REGION=${awsRegion}
-export GPU_CAPACITY_AZ=${gpuCapacityAz || 'undefined'}
-export GPU_INSTANCE_TYPE=${gpuInstanceType || 'undefined'}
-export GPU_INSTANCE_COUNT=${gpuInstanceCount || 'undefined'}
-
-# Automatic fill
-export CLOUD_FORMATION_FULL_STACK_NAME=${stackName || `full-stack-${clusterTag}`}
-export EKS_CLUSTER_NAME=eks-cluster-${clusterTag}
-export HP_CLUSTER_NAME=hp-cluster-${clusterTag}
-export MLFLOW_SERVER_NAME=mlflow-server-${clusterTag}
-export DEPLOY_MODEL_S3_BUCKET=cluster-mount-${clusterTag}
-export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export STACK_ID=${stackName || `full-stack-${clusterTag}`}
-export AWS_AZ=$(aws ec2 describe-availability-zones --region ${awsRegion} --query "AvailabilityZones[?ZoneName=='${gpuCapacityAz || ''}'].ZoneId" --output text)
-
-export CURRENT_ROLE_ARN=$(aws sts get-caller-identity --query Arn --output text)
-export CURRENT_ROLE_NAME=$(echo "$CURRENT_ROLE_ARN" | sed 's/.*role\\///' | sed 's/\\/.*//')
-export IAM_ROLE_ARN=arn:aws:iam::$ACCOUNT_ID:role/$CURRENT_ROLE_NAME
-
-# Generated by UI Panel on ${new Date().toISOString()}
-`;
   }
 
   // 获取集群信息

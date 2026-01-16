@@ -583,19 +583,82 @@ managedNodeGroups:
    * @returns {string} HyperPod模板文件的绝对路径
    */
   static getHyperPodTemplatePath() {
-    const envTemplatePath = process.env.HYPERPOD_TEMPLATE_PATH;
-    
-    if (!envTemplatePath) {
-      throw new Error('HyperPod template path not configured. Please set HYPERPOD_TEMPLATE_PATH in client/user.env');
-    }
-    
-    // 使用挂载的项目根目录
+    // 使用新的 full 模板，包含 S3 + LifeCycle + Role + HyperPod
     const projectRoot = path.join(__dirname, '../../hyperpod-instantstart');
-    return path.join(projectRoot, envTemplatePath);
+    return path.join(projectRoot, 'cli-min/2-hypd-full.yaml');
   }
 
   /**
-   * 创建HyperPod Stack
+   * 获取 EKS HyperPod Dependencies 模板路径
+   */
+  static getEksHpDepsTemplatePath() {
+    const projectRoot = path.join(__dirname, '../../hyperpod-instantstart');
+    return path.join(projectRoot, 'cli-min/1i-eks-hp-deps.yaml');
+  }
+
+  /**
+   * 创建 EKS HyperPod Dependencies Stack（S3 + LifeCycle + SageMaker Role）
+   * 用于导入的 EKS 集群
+   */
+  static async createEksHpDepsStack(clusterTag, region) {
+    const templatePath = this.getEksHpDepsTemplatePath();
+    
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`EKS HP deps template not found: ${templatePath}`);
+    }
+
+    const stackName = `eks-hp-deps-${clusterTag}`;
+    
+    const command = `aws cloudformation create-stack \
+      --stack-name ${stackName} \
+      --template-body file://${templatePath} \
+      --parameters ParameterKey=ResourceNamePrefix,ParameterValue=${clusterTag} \
+      --capabilities CAPABILITY_IAM \
+      --region ${region}`;
+
+    console.log(`Creating EKS HyperPod deps stack: ${stackName}`);
+    const result = execSync(command, { encoding: 'utf8' });
+    const stackId = JSON.parse(result).StackId;
+
+    // 等待 Stack 创建完成
+    console.log('Waiting for deps stack to complete...');
+    execSync(`aws cloudformation wait stack-create-complete --stack-name ${stackName} --region ${region}`, {
+      encoding: 'utf8',
+      timeout: 300000 // 5 分钟超时
+    });
+
+    // 获取 Stack 输出
+    const outputs = await this.getStackOutputs(stackName, region);
+    
+    return {
+      stackName,
+      stackId,
+      region,
+      outputs: {
+        S3BucketName: outputs.S3BucketName,
+        SageMakerIAMRoleArn: outputs.SageMakerIAMRoleArn,
+        SageMakerIAMRoleName: outputs.SageMakerIAMRoleName
+      }
+    };
+  }
+
+  /**
+   * 获取 Stack 输出
+   */
+  static async getStackOutputs(stackName, region) {
+    const cmd = `aws cloudformation describe-stacks --stack-name ${stackName} --region ${region} --query "Stacks[0].Outputs" --output json`;
+    const result = execSync(cmd, { encoding: 'utf8' });
+    const outputs = JSON.parse(result);
+    
+    const outputMap = {};
+    outputs.forEach(o => {
+      outputMap[o.OutputKey] = o.OutputValue;
+    });
+    return outputMap;
+  }
+
+  /**
+   * 创建HyperPod Stack（使用 2-hypd-full.yaml）
    * @param {string} stackName - Stack名称
    * @param {string} region - AWS区域
    * @param {Object} stackInfo - 从EKS stack获取的基础设施信息
@@ -611,14 +674,15 @@ managedNodeGroups:
         throw new Error(`HyperPod template not found: ${templatePath}`);
       }
       
-      // 构建HyperPod参数
+      // 构建HyperPod参数（适配 2-hypd-full.yaml）
       const parameters = [
         `ParameterKey=ExistingVpcId,ParameterValue=${stackInfo.VPC_ID}`,
         `ParameterKey=ExistingSecurityGroupId,ParameterValue=${stackInfo.SECURITY_GROUP_ID}`,
         `ParameterKey=ExistingEKSClusterName,ParameterValue=${stackInfo.EKS_CLUSTER_NAME}`,
-        `ParameterKey=ExistingSageMakerRoleName,ParameterValue=${stackInfo.SAGEMAKER_ROLE_NAME}`,
-        `ParameterKey=ExistingS3BucketName,ParameterValue=${stackInfo.S3_BUCKET_NAME}`,
         `ParameterKey=ExistingNatGatewayId,ParameterValue=${stackInfo.NAT_GATEWAY_ID}`,
+        // 可选参数：如果有现有资源则传递，否则留空让 CF 创建
+        `ParameterKey=ExistingSageMakerRoleName,ParameterValue=${stackInfo.SAGEMAKER_ROLE_NAME || ''}`,
+        `ParameterKey=ExistingS3BucketName,ParameterValue=${stackInfo.S3_BUCKET_NAME || ''}`,
         ...Object.entries(userConfig).map(([key, value]) => 
           `ParameterKey=${key},ParameterValue=${value}`
         )
@@ -630,7 +694,7 @@ managedNodeGroups:
         --stack-name ${stackName} \\
         --template-body file://${templatePath} \\
         --region ${region} \\
-        --capabilities CAPABILITY_IAM \\
+        --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \\
         --parameters ${parameterString}`;
       
       console.log(`Creating HyperPod stack: ${stackName}`);

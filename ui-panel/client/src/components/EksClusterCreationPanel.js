@@ -31,6 +31,7 @@ const EksClusterCreationPanel = () => {
   const [statusLoading, setStatusLoading] = useState(false);
   const [cidrLoading, setCidrLoading] = useState(false);
   const [cidrConfig, setCidrConfig] = useState(null);
+  const [metadataLoading, setMetadataLoading] = useState(false);
 
   // 恢复创建状态
   const restoreCreationStatus = async () => {
@@ -284,6 +285,7 @@ const EksClusterCreationPanel = () => {
 
   // 获取当前AWS region作为默认值
   const fetchCurrentRegion = async () => {
+    setMetadataLoading(true);
     try {
       const response = await fetch('/api/aws/current-region');
       const result = await response.json();
@@ -293,16 +295,14 @@ const EksClusterCreationPanel = () => {
         });
         // 自动生成 CIDR 配置
         await generateCidrConfig(result.region);
+      } else {
+        message.error('Failed to get AWS region: ' + (result.error || 'Unknown error'));
       }
     } catch (error) {
       console.error('Failed to fetch current region:', error);
-      // 如果获取失败，使用默认值
-      const defaultRegion = 'us-west-1';
-      form.setFieldsValue({
-        awsRegion: defaultRegion
-      });
-      // 自动生成 CIDR 配置
-      await generateCidrConfig(defaultRegion);
+      message.error('Failed to fetch AWS region. Please configure AWS CLI.');
+    } finally {
+      setMetadataLoading(false);
     }
   };
 
@@ -404,7 +404,11 @@ const EksClusterCreationPanel = () => {
                     label="AWS Region"
                     rules={[{ required: true, message: 'Please enter AWS region' }]}
                   >
-                    <Input placeholder="us-east-1" disabled />
+                    <Input 
+                      disabled 
+                      suffix={metadataLoading ? <Spin size="small" /> : null}
+                      placeholder={metadataLoading ? "Loading metadata..." : ""}
+                    />
                   </Form.Item>
                 </Col>
               </Row>

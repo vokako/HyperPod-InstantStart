@@ -2,9 +2,9 @@
 
 set -e
 
-algorithm_name=hypd-training-op-msswift-t28-2
-docker_filename=Dockerfile.torch.ms-swift
-img_version=v1219-5
+algorithm_name=hypd-training-op-torch
+docker_filename=Dockerfile.torch
+img_version=latest
 
 region=$(aws configure get region)
 account=$(aws sts get-caller-identity --query Account --output text)

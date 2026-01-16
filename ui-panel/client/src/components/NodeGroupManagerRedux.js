@@ -26,6 +26,7 @@ import {
   selectEffectiveDependenciesStatus
 } from '../store/selectors';
 import globalRefreshManager from '../hooks/useGlobalRefresh';
+import operationRefreshManager from '../hooks/useOperationRefresh';
 
 const { Text } = Typography;
 
@@ -1261,6 +1262,17 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
     };
   }, [handleCompleteRefresh]);
 
+  // 注册到操作刷新管理器（响应 WebSocket 广播）
+  useEffect(() => {
+    const componentId = 'nodegroup-manager';
+    
+    operationRefreshManager.subscribe(componentId, handleCompleteRefresh);
+    
+    return () => {
+      operationRefreshManager.unsubscribe(componentId);
+    };
+  }, [handleCompleteRefresh]);
+
   // 移除错误的 globalRefreshManager 订阅
   // Karpenter 状态应该通过用户主动刷新来获取，而不是 WebSocket 推送
   // globalRefreshManager 只用于管理前端组件的刷新，不用于集群资源状态订阅
@@ -1424,11 +1436,16 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
         const isManaged = hyperpodKarpenterResources.managedInstanceGroups && 
                          hyperpodKarpenterResources.managedInstanceGroups.includes(record.name);
         
+        const getTypeConfig = (t) => {
+          if (t === 'spot') return { color: 'orange', label: 'Spot' };
+          if (t === 'training-plan') return { color: 'purple', label: 'FTP' };
+          return { color: 'green', label: 'OD' };
+        };
+        const config = getTypeConfig(type);
+        
         return (
           <Space>
-            <Tag color={type === 'spot' ? 'orange' : 'green'}>
-              {type === 'spot' ? 'Spot' : 'OD'}
-            </Tag>
+            <Tag color={config.color}>{config.label}</Tag>
             {isManaged && (
               <Tag color="blue">Karpenter</Tag>
             )}
@@ -2091,10 +2108,10 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
           </div>
 
           <Form.Item
-            name="clusterTag"
-            label="Cluster Tag"
-            rules={[{ required: true, message: 'Please input cluster tag' }]}
-            extra="Used for resource naming (stack, cluster, node groups)"
+            name="hyperPodTag"
+            label="HyperPod Tag"
+            rules={[{ required: true, message: 'Please input HyperPod tag' }]}
+            extra="Used for resource naming (S3, IAM Role, Instance Group)"
           >
             <Input placeholder="my-hyperpod" />
           </Form.Item>

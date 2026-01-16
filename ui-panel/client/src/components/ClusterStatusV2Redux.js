@@ -278,11 +278,12 @@ const ClusterStatusV2Redux = () => {
         // HyperPod Karpenter节点 (优先判断)
         if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod' && isKarpenter) {
           const capacityType = record.capacityType; // 从后端获取的 capacity type
+          const typeLabel = capacityType === 'spot' ? 'Spot' : capacityType === 'training-plan' ? 'FTP' : 'On-Demand';
           return (
             <div>
               <Tag color="#fa8c16">HyperPod Karpenter</Tag>
               <div style={{ fontSize: '11px', color: '#666', marginTop: 2 }}>
-                {capacityType === 'spot' ? 'Spot' : 'On-Demand'}
+                {typeLabel}
               </div>
             </div>
           );
@@ -291,12 +292,13 @@ const ClusterStatusV2Redux = () => {
         // HyperPod节点
         if (labels['sagemaker.amazonaws.com/compute-type'] === 'hyperpod') {
           const capacityType = record.capacityType; // 从后端获取的 capacity type
+          const typeLabel = capacityType === 'spot' ? 'Spot' : capacityType === 'training-plan' ? 'FTP' : 'On-Demand';
           return (
             <div>
               <Tag color="#722ed1">HyperPod</Tag>
               {capacityType && (
                 <div style={{ fontSize: '11px', color: '#666', marginTop: 2 }}>
-                  {capacityType === 'spot' ? 'Spot' : 'On-Demand'}
+                  {typeLabel}
                 </div>
               )}
             </div>

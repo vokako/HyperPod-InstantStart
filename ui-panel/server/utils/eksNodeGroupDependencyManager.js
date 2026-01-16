@@ -44,7 +44,7 @@ class EksNodeGroupDependencyManager {
     
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const checkCmd = `cd ${configDir} && bash -c 'source init_envs && aws eks describe-nodegroup --cluster-name $EKS_CLUSTER_NAME --nodegroup-name ${nodeGroupName} --region $AWS_REGION --query "nodegroup.status" --output text'`;
+        const checkCmd = `cd ${configDir} && bash -c 'source cluster_envs && aws eks describe-nodegroup --cluster-name $EKS_CLUSTER_NAME --nodegroup-name ${nodeGroupName} --region $AWS_REGION --query "nodegroup.status" --output text'`;
         const status = execSync(checkCmd, { encoding: 'utf8' }).trim();
         
         console.log(`Node group ${nodeGroupName} status: ${status} (attempt ${attempt}/${maxAttempts})`);
@@ -84,7 +84,7 @@ class EksNodeGroupDependencyManager {
     
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const checkCmd = `cd ${configDir} && bash -c 'source init_envs && kubectl get nodes -l eks.amazonaws.com/nodegroup=${nodeGroupName} --no-headers | grep -v Ready | wc -l'`;
+        const checkCmd = `cd ${configDir} && bash -c 'source cluster_envs && kubectl get nodes -l eks.amazonaws.com/nodegroup=${nodeGroupName} --no-headers | grep -v Ready | wc -l'`;
         const notReadyCount = parseInt(execSync(checkCmd, { encoding: 'utf8' }).trim());
         
         if (notReadyCount === 0) {
@@ -112,7 +112,7 @@ class EksNodeGroupDependencyManager {
   static async installCustomDependenciesOld(configDir, nodeGroupName) {
     console.log(`Installing custom dependencies for node group: ${nodeGroupName}`);
     
-    const commands = `cd ${configDir} && bash -c 'source init_envs && 
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs && 
     kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml && 
     helm repo add eks https://aws.github.io/eks-charts 2>/dev/null || true && 
     helm repo update && 
@@ -134,7 +134,7 @@ class EksNodeGroupDependencyManager {
   static async installCustomDependencies(configDir, nodeGroupName) {
     console.log(`Installing custom dependencies for node group: ${nodeGroupName}`);
     
-    const commands = `cd ${configDir} && bash -c 'source init_envs && 
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs && 
     # 添加 nvidia helm repo
     helm repo add nvdp https://nvidia.github.io/k8s-device-plugin 2>/dev/null || true && 
     helm repo update && 
@@ -169,7 +169,7 @@ class EksNodeGroupDependencyManager {
    */
   static async checkDependencyStatus(configDir, nodeGroupName) {
     try {
-      const commands = `cd ${configDir} && bash -c 'source init_envs && 
+      const commands = `cd ${configDir} && bash -c 'source cluster_envs && 
       echo "=== Node Group Status ==="
       aws eks describe-nodegroup --cluster-name $EKS_CLUSTER_NAME --nodegroup-name ${nodeGroupName} --region $AWS_REGION --query "nodegroup.status" --output text
       

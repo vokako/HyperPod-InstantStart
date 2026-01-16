@@ -129,7 +129,7 @@ const HyperPodRecipes = ({ onLaunch, deploymentStatus }) => {
           tab={
             <Space>
               <RocketOutlined />
-              VERL Recipe
+              Verl Recipe
             </Space>
           }
           key="verl"

@@ -51,44 +51,6 @@ class ClusterDependencyManager {
       });
     });
   }
-  
-  /**
-   * 获取CloudFormation Stack的输出信息（统一入口）
-   */
-  static async fetchCloudFormationOutputs(clusterConfigDir, clusterTag = null) {
-    console.log('Fetching CloudFormation outputs...');
-    
-    if (!clusterTag) {
-      throw new Error('clusterTag is required');
-    }
-    
-    const MetadataUtils = require('./metadataUtils');
-    const clusterType = MetadataUtils.getClusterType(clusterTag);
-    
-    if (clusterType === 'created') {
-      return await this.generateStackEnvsFromMetadata(clusterConfigDir, clusterTag, 'created');
-    } else if (clusterType === 'imported') {
-      return await this.generateStackEnvsFromMetadata(clusterConfigDir, clusterTag, 'imported');
-    } else {
-      throw new Error(`Unknown cluster type: ${clusterType}`);
-    }
-  }
-
-  /**
-   * 从 metadata 生成 stack_envs 文件（通用方法）
-   */
-  static async generateStackEnvsFromMetadata(clusterConfigDir, clusterTag, clusterType) {
-    console.log(`Generating stack_envs for ${clusterType} cluster: ${clusterTag}`);
-    
-    const MetadataUtils = require('./metadataUtils');
-    const stackEnvsContent = MetadataUtils.generateStackEnvsFromMetadata(clusterTag);
-    
-    const stackEnvsPath = path.join(clusterConfigDir, 'stack_envs');
-    fs.writeFileSync(stackEnvsPath, stackEnvsContent);
-    
-    console.log('Generated stack_envs from metadata');
-    return stackEnvsPath;
-  }
 
   /**
    * 配置kubectl和OIDC provider
@@ -96,7 +58,7 @@ class ClusterDependencyManager {
   static async configureKubectlAndOIDC(clusterConfigDir) {
     console.log('Configuring kubectl and OIDC...');
     
-    const kubectlCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const kubectlCmd = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
 echo "=== Configuring kubectl for cluster: $EKS_CLUSTER_NAME ===" &&
 aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION &&
 echo "=== Associating IAM OIDC provider ===" &&
@@ -158,7 +120,7 @@ fi`;
    */
   static async createNamespaces(clusterConfigDir) {
     console.log('Creating namespaces...');
-    const namespaceCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const namespaceCmd = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
 kubectl create namespace aws-hyperpod --dry-run=client -o yaml | kubectl apply -f - &&
 kubectl create namespace kubeflow --dry-run=client -o yaml | kubectl apply -f -'`;
     
@@ -171,7 +133,7 @@ kubectl create namespace kubeflow --dry-run=client -o yaml | kubectl apply -f -'
   static async installHyperPodChart(clusterConfigDir) {
     console.log('Installing HyperPod helm chart...');
     
-    const installCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const installCmd = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
 echo "=== Building HyperPod Helm Chart dependencies ===" &&
 helm dependency build sagemaker-hyperpod-cli/helm_chart/HyperPodHelmChart --debug &&
 echo "=== Installing HyperPod Helm Chart ===" &&
@@ -208,7 +170,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
   static async installGeneralDependencies(clusterConfigDir) {
     console.log('Installing EKS general dependencies...');
     
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
     
     # 安装S3 CSI驱动程序
     echo "=== Installing S3 CSI Driver ==="
@@ -254,17 +216,40 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
   static async installFSxDependencies(clusterConfigDir) {
     console.log('Installing FSx dependencies...');
     
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
     
     echo "=== Installing FSx CSI Driver ==="
     
-    # 安装 FSx CSI Driver addon
-    aws eks create-addon \\
-      --cluster-name $EKS_CLUSTER_NAME \\
-      --addon-name aws-fsx-csi-driver \\
-      --region $AWS_REGION || echo "FSx CSI Driver addon already exists or failed"
+    # 获取账户ID
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    ROLE_NAME=SM_HP_FSX_CSI_ROLE_$EKS_CLUSTER_NAME
     
-    echo "FSx dependencies installation completed"
+    # 创建IAM服务账户和角色
+    echo "Creating IAM service account for FSx CSI driver..."
+    eksctl create iamserviceaccount \\
+        --name fsx-csi-controller-sa \\
+        --namespace kube-system \\
+        --override-existing-serviceaccounts \\
+        --cluster $EKS_CLUSTER_NAME \\
+        --attach-policy-arn arn:aws:iam::aws:policy/AmazonFSxFullAccess \\
+        --role-name $ROLE_NAME \\
+        --region $AWS_REGION \\
+        --approve \\
+        --role-only || echo "FSx CSI service account already exists"
+    
+    # 获取角色ARN
+    ROLE_ARN=$(aws iam get-role --role-name $ROLE_NAME --query "Role.Arn" --output text)
+    
+    # 安装 FSx CSI Driver addon
+    echo "Installing FSx CSI driver addon..."
+    eksctl create addon \\
+        --name aws-fsx-csi-driver \\
+        --cluster $EKS_CLUSTER_NAME \\
+        --service-account-role-arn $ROLE_ARN \\
+        --region $AWS_REGION \\
+        --force || echo "FSx CSI driver addon already exists"
+    
+    echo "FSx CSI Driver installation completed"
     '`;
     
     await this.executeNonBlocking(commands);
@@ -276,7 +261,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
   static async installKuberayOperator(clusterConfigDir) {
     console.log('Installing kuberay-operator...');
     
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
     
     echo "=== Installing kuberay-operator ==="
     
@@ -303,7 +288,11 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
   static async installnlbDependencies(clusterConfigDir) {
     console.log('Installing NLB dependencies...');
     
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
+    
+    # 动态获取 ACCOUNT_ID 和 VPC_ID
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    VPC_ID=$(aws eks describe-cluster --name $EKS_CLUSTER_NAME --region $AWS_REGION --query "cluster.resourcesVpcConfig.vpcId" --output text)
     
     # 下载ALB IAM策略
     curl -o /tmp/alb-iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.13.0/docs/install/iam_policy.json
@@ -418,7 +407,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
   static async installCertManager(clusterConfigDir) {
     console.log('Installing cert-manager addon...');
     
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
 
     echo "Creating cert-manager addon..."
     aws eks create-addon \\
@@ -464,7 +453,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
   static async installEKSPodIdentity(clusterConfigDir) {
     console.log('Installing EKS Pod Identity Agent...');
     
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
 
     # 创建EKS Pod Identity Agent addon
     echo "Creating EKS Pod Identity Agent addon..."
@@ -496,19 +485,16 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
         throw new Error(`Cluster config directory not found: ${configDir}`);
       }
       
-      // 步骤 1: 生成 stack_envs
-      await this.fetchCloudFormationOutputs(configDir, clusterTag);
-      
-      // 步骤 2: 配置 kubectl 和 OIDC
+      // 步骤 1: 配置 kubectl 和 OIDC
       await this.configureKubectlAndOIDC(configDir);
 
-      // 步骤 3: 安装 S3 CSI Driver
+      // 步骤 2: 安装 S3 CSI Driver
       await this.installGeneralDependencies(configDir);
       
-      // 步骤 4: 安装 FSx CSI Driver
-      // await this.installFSxDependencies(configDir);
+      // 步骤 3: 安装 FSx CSI Driver
+      await this.installFSxDependencies(configDir);
       
-      // 步骤 5: 安装 kuberay-operator
+      // 步骤 4: 安装 kuberay-operator
       await this.installKuberayOperator(configDir);
       
       console.log(`Successfully configured imported cluster dependencies for: ${clusterTag}`);
@@ -530,11 +516,23 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
       const MetadataUtils = require('./metadataUtils');
       const clusterType = MetadataUtils.getClusterType(clusterTag);
       
-      if (clusterType === 'imported') {
-        // 导入集群使用简化流程
+      // 检查是否是导入的 raw EKS 集群（需要完整的 HyperPod 依赖）
+      const clusterDir = clusterManager.getClusterDir(clusterTag);
+      const importMetadataPath = path.join(clusterDir, 'metadata', 'import_metadata.json');
+      let isRawEKS = false;
+      
+      if (clusterType === 'imported' && fs.existsSync(importMetadataPath)) {
+        const importMetadata = JSON.parse(fs.readFileSync(importMetadataPath, 'utf8'));
+        // 如果是导入的 EKS 集群（不是已有 HyperPod 的集群），标记为 raw EKS
+        isRawEKS = importMetadata.importType === 'eks' || !importMetadata.hasHyperPod;
+      }
+      
+      if (clusterType === 'imported' && !isRawEKS) {
+        // 导入的已有 HyperPod 的集群使用简化流程
         return await this.configureImportedClusterDependencies(clusterTag, clusterManager);
       } else {
-        // 创建集群使用完整流程
+        // 创建的集群或导入的 raw EKS 集群使用完整流程（包含 HyperPod Helm Chart）
+        console.log(`Using full dependency configuration for ${clusterType === 'imported' ? 'imported raw EKS' : 'created'} cluster: ${clusterTag}`);
         return await this.configureCreatedClusterDependencies(clusterTag, clusterManager);
       }
       
@@ -560,8 +558,6 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
         throw new Error(`Cluster config directory not found: ${configDir}`);
       }
       
-      await this.fetchCloudFormationOutputs(configDir, clusterTag);
-      
       await this.configureKubectlAndOIDC(configDir);
       
       await this.installHelmDependencies(configDir);
@@ -577,7 +573,7 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
       
       await this.installGeneralDependencies(configDir);
       
-      // await this.installFSxDependencies(configDir);
+      await this.installFSxDependencies(configDir);
 
       await this.installKuberayOperator(configDir);
       
@@ -595,12 +591,8 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
    */
   static async checkDependencyStatus(clusterConfigDir) {
     try {
-      // 检查stack_envs文件是否存在
-      const stackEnvsPath = path.join(clusterConfigDir, 'stack_envs');
-      const hasStackEnvs = fs.existsSync(stackEnvsPath);
-      
       // 检查helm chart是否安装
-      const helmCheckCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && helm list -n kube-system | grep hyperpod-dependencies'`;
+      const helmCheckCmd = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && helm list -n kube-system | grep hyperpod-dependencies'`;
       let hasHelmChart = false;
       
       try {
@@ -611,15 +603,13 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
       }
       
       return {
-        hasStackEnvs,
         hasHelmChart,
-        isConfigured: hasStackEnvs && hasHelmChart
+        isConfigured: hasHelmChart
       };
       
     } catch (error) {
       console.error('Error checking dependency status:', error);
       return {
-        hasStackEnvs: false,
         hasHelmChart: false,
         isConfigured: false,
         error: error.message
@@ -635,16 +625,10 @@ echo "=== HyperPod Helm Chart installation completed ==="'`;
       console.log('Cleaning up cluster dependencies...');
       
       // 卸载helm chart
-      const uninstallCmd = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs && 
+      const uninstallCmd = `cd ${clusterConfigDir} && bash -c 'source cluster_envs && 
 helm uninstall hyperpod-dependencies -n kube-system || true'`;
       
       execSync(uninstallCmd, { stdio: 'inherit' });
-      
-      // 删除stack_envs文件
-      const stackEnvsPath = path.join(clusterConfigDir, 'stack_envs');
-      if (fs.existsSync(stackEnvsPath)) {
-        fs.unlinkSync(stackEnvsPath);
-      }
       
       // 删除克隆的仓库
       const repoPath = path.join(clusterConfigDir, 'sagemaker-hyperpod-cli');

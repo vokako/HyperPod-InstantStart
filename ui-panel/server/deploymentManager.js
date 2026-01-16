@@ -549,7 +549,7 @@ router.get('/deployments', async (req, res) => {
       scaledObjects = scaledObjectsData.items || [];
       console.log(`Found ${scaledObjects.length} ScaledObjects`);
     } catch (error) {
-      console.log('No ScaledObjects found or KEDA not installed:', error.message);
+      // KEDA 未安装时静默处理
     }
 
     // 显示所有deployment，不进行过滤（包含Router和hyperpod router）
@@ -1001,52 +1001,70 @@ router.post('/deploy/container', async (req, res) => {
     }
     console.log(`Using service engine: ${servEngine}`);
 
-    // 加载模板
+    // 加载并解析模板
     const templatePath = path.join(__dirname, '../templates/inference-container-hybrid-template.yaml');
     const templateContent = await fs.readFile(templatePath, 'utf8');
+    const YAML = require('yaml');
+    const deployment = YAML.parse(templateContent);
 
-    // 生成 HuggingFace token 环境变量
-    let hfTokenEnv = '';
-    if (huggingFaceToken && huggingFaceToken.trim() !== '') {
-      hfTokenEnv = `
-            - name: HUGGING_FACE_HUB_TOKEN
-              value: "${huggingFaceToken}"`;
+    // 基本信息（对象操作）
+    const appName = `${servEngine}-${finalDeploymentTag}-inference`;
+    deployment.metadata.name = appName;
+    deployment.metadata.labels.app = appName;
+    deployment.metadata.labels['model-type'] = servEngine;
+    deployment.metadata.labels['deployment-tag'] = finalDeploymentTag;
+    
+    deployment.spec.selector.matchLabels.app = appName;
+    deployment.spec.replicas = replicas;
+
+    // Pod 模板 labels
+    const podLabels = deployment.spec.template.metadata.labels;
+    podLabels.app = appName;
+    podLabels['model-type'] = servEngine;
+
+    // HAMi label（按需添加）
+    if (gpuMemory === -1) {
+      podLabels['hami.io/webhook'] = 'ignore';
     }
 
-    // 生成 resources 配置
-    const resourcesSection = generateResourcesSection({ gpuCount, gpuMemory, cpuRequest, memoryRequest });
+    // Container 配置
+    const container = deployment.spec.template.spec.containers[0];
+    container.name = servEngine;
+    container.image = dockerImage;
+    container.ports[0].containerPort = port || 8000;
 
-    // 生成 HAMi webhook ignore label
-    const hamiLabel = gpuMemory === -1
-      ? '\n        hami.io/webhook: ignore'
-      : '';
+    // Resources（对象操作）
+    container.resources = generateResourcesSection({ gpuCount, gpuMemory, cpuRequest, memoryRequest });
 
-    // 替换模板占位符
-    let newYamlContent = templateContent
-      .replace(/SERVENGINE/g, servEngine)
-      .replace(/MODEL_TAG/g, finalDeploymentTag)
-      .replace(/REPLICAS_COUNT/g, replicas.toString())
-      .replace(/GPU_COUNT/g, gpuCount.toString())
-      .replace(/HYBRID_NODE_SELECTOR_TERMS/g, hybridNodeSelectorTerms)
-      .replace(/HF_TOKEN_ENV/g, hfTokenEnv)
-      .replace(/COMMAND_YAML/g, commandYaml)
-      .replace(/DOCKER_IMAGE/g, dockerImage)
-      .replace(/PORT_NUMBER/g, port || 8000)
-      .replace(/RESOURCES_SECTION/g, resourcesSection)
-      .replace(/NLB_ANNOTATIONS/g, nlbAnnotations)
-      .replace(/HAMI_LABEL/g, hamiLabel);
+    // Command（按需添加）
+    if (parsedCommand) {
+      container.command = parsedCommand.fullCommand;
+    }
 
-    // Model Pool 标签注入
+    // HuggingFace Token（按需添加）
+    if (huggingFaceToken?.trim()) {
+      container.env.unshift({
+        name: 'HUGGING_FACE_HUB_TOKEN',
+        value: huggingFaceToken
+      });
+    }
+
+    // NodeSelector Terms（对象操作）
+    const nodeSelectorTerms = generateHybridNodeSelectorTerms(instanceTypes);
+    deployment.spec.template.spec.affinity.nodeAffinity
+      .requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms = nodeSelectorTerms;
+
+    // Model Pool 标签（按需添加）
     if (deployAsPool) {
-      newYamlContent = newYamlContent.replace(
-        /(\s+deployment-tag: "[^"]+"\n)/,
-        `$1    model-id: "${finalDeploymentTag}"\n    deployment-type: "model-pool"\n`
-      );
-      newYamlContent = newYamlContent.replace(
-        /(template:\s+metadata:\s+labels:\s+[\s\S]*?)(\n\s+spec:)/,
-        `$1\n        model-id: "${finalDeploymentTag}"\n        business: "unassigned"\n        deployment-type: "model-pool"$2`
-      );
+      deployment.metadata.labels['model-id'] = finalDeploymentTag;
+      deployment.metadata.labels['deployment-type'] = 'model-pool';
+      
+      podLabels['model-id'] = finalDeploymentTag;
+      podLabels['business'] = 'unassigned';
+      podLabels['deployment-type'] = 'model-pool';
     }
+
+    let newYamlContent = YAML.stringify(deployment, { blockQuote: 'literal', lineWidth: 0 });
 
     // 生成 Service YAML (非 modelpool 模式)
     if (!deployAsPool) {

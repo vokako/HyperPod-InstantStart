@@ -29,6 +29,50 @@ class MetadataUtils {
   }
 
   /**
+   * 更新集群的 deps stack 信息（用于导入的 EKS 创建 HyperPod 时）
+   */
+  static async updateClusterDepsInfo(clusterTag, depsStackInfo) {
+    try {
+      const clusterInfo = this.getClusterInfo(clusterTag);
+      if (!clusterInfo) {
+        throw new Error(`Cluster info not found for: ${clusterTag}`);
+      }
+
+      // 更新 cloudFormation 信息
+      clusterInfo.cloudFormation = clusterInfo.cloudFormation || {};
+      clusterInfo.cloudFormation.depsStackName = depsStackInfo.stackName;
+      clusterInfo.cloudFormation.depsStackId = depsStackInfo.stackId;
+      clusterInfo.cloudFormation.outputs = clusterInfo.cloudFormation.outputs || {};
+      clusterInfo.cloudFormation.outputs.OutputS3BucketName = depsStackInfo.outputs.S3BucketName;
+      clusterInfo.cloudFormation.outputs.OutputSageMakerIAMRoleArn = depsStackInfo.outputs.SageMakerIAMRoleArn;
+
+      // 更新 eksCluster 信息
+      clusterInfo.eksCluster = clusterInfo.eksCluster || {};
+      clusterInfo.eksCluster.s3BucketName = depsStackInfo.outputs.S3BucketName;
+      clusterInfo.eksCluster.sageMakerRoleArn = depsStackInfo.outputs.SageMakerIAMRoleArn;
+
+      clusterInfo.lastModified = new Date().toISOString();
+
+      // 保存
+      const clusterInfoPath = path.join(this.getMetadataDir(clusterTag), 'cluster_info.json');
+      fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+      console.log(`Updated deps stack info for cluster: ${clusterTag}`);
+      
+      // ✅ 更新 cluster_envs 文件（添加依赖 Stack 输出）
+      const EnvInjector = require('./envInjector');
+      try {
+        EnvInjector.updateClusterEnvFile(clusterTag);
+        console.log(`✅ Updated cluster_envs with dependency stack outputs for ${clusterTag}`);
+      } catch (error) {
+        console.error(`Failed to update cluster_envs for ${clusterTag}:`, error);
+      }
+    } catch (error) {
+      console.error(`Error updating deps info for ${clusterTag}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * 读取creation_metadata.json
    */
   static getCreationMetadata(clusterTag) {
@@ -59,58 +103,6 @@ class MetadataUtils {
     }
 
     return {};
-  }
-
-  /**
-   * 从metadata生成stack_envs内容
-   */
-  static generateStackEnvsFromMetadata(clusterTag) {
-    const outputs = this.getCloudFormationOutputs(clusterTag);
-    
-    let content = '#!/bin/bash\n\n';
-    content += '# Stack environment variables - Generated from metadata\n';
-    
-    // 从EKS集群ARN或SageMaker角色ARN中提取账户ID
-    let accountId = null;
-    if (outputs.OutputEKSClusterArn) {
-      const arnParts = outputs.OutputEKSClusterArn.split(':');
-      if (arnParts.length >= 5) {
-        accountId = arnParts[4];
-      }
-    } else if (outputs.OutputSageMakerIAMRoleArn) {
-      const arnParts = outputs.OutputSageMakerIAMRoleArn.split(':');
-      if (arnParts.length >= 5) {
-        accountId = arnParts[4];
-      }
-    }
-    
-    // 添加账户ID环境变量
-    if (accountId) {
-      content += `export ACCOUNT_ID=${accountId}\n`;
-    }
-    
-    // 映射CloudFormation输出到环境变量
-    const outputMapping = {
-      'OutputVpcId': 'VPC_ID',
-      'OutputPrivateSubnetIds': 'PRIVATE_SUBNET_ID',
-      'OutputSecurityGroupId': 'SECURITY_GROUP_ID',
-      'OutputHyperPodClusterName': 'HP_CLUSTER_NAME',
-      'OutputHyperPodClusterArn': 'HP_CLUSTER_ARN',
-      'OutputEKSClusterName': 'EKS_CLUSTER_NAME_FROM_CF',
-      'OutputEKSClusterArn': 'EKS_CLUSTER_ARN',
-      'OutputS3BucketName': 'S3_BUCKET_NAME',
-      'OutputSageMakerIAMRoleArn': 'SAGEMAKER_ROLE_ARN'
-    };
-
-    Object.entries(outputMapping).forEach(([outputKey, envVar]) => {
-      if (outputs[outputKey]) {
-        content += `export ${envVar}=${outputs[outputKey]}\n`;
-      }
-    });
-
-    content += `\n# Generated from metadata on ${new Date().toISOString()}\n`;
-    
-    return content;
   }
 
   /**
@@ -262,12 +254,6 @@ class MetadataUtils {
       const clusterResult = JSON.parse(execSync(clusterCmd, { encoding: 'utf8' }));
       const cluster = clusterResult.cluster;
       
-      // 获取账户ID和当前角色
-      const accountId = execSync('aws sts get-caller-identity --query Account --output text', { encoding: 'utf8' }).trim();
-      const roleArn = execSync('aws sts get-caller-identity --query Arn --output text', { encoding: 'utf8' }).trim();
-      // ARN 格式: arn:aws:sts::123:assumed-role/RoleName/SessionName → split('/')[1] = RoleName
-      const roleName = roleArn.split('/')[1];
-      
       // 获取HyperPod计算节点信息（容错处理）
       let hyperPodClusterData = null;
       if (hyperPodClusters) {
@@ -290,31 +276,28 @@ class MetadataUtils {
       }
       
       // 构建与创建集群格式对齐的资源信息
+      // 导入的 EKS 没有 S3 和 SageMaker Role，这些在创建 HyperPod 时由 CF 创建
+      // 安全组优先使用用户附加的安全组（securityGroupIds），而非 EKS 自动创建的集群安全组
+      const additionalSecurityGroups = cluster.resourcesVpcConfig.securityGroupIds || [];
+      const securityGroupId = additionalSecurityGroups.length > 0 
+        ? additionalSecurityGroups[0] 
+        : cluster.resourcesVpcConfig.clusterSecurityGroupId;
+      
       const resources = {
         OutputVpcId: cluster.resourcesVpcConfig.vpcId,
         OutputEKSClusterName: cluster.name,
         OutputEKSClusterArn: cluster.arn,
-        OutputSecurityGroupId: cluster.resourcesVpcConfig.clusterSecurityGroupId,
-        OutputSageMakerIAMRoleArn: `arn:aws:iam::${accountId}:role/${roleName}`,
-        // EKS集群关联的子网（对应CloudFormation的OutputPrivateSubnetIds）
+        OutputSecurityGroupId: securityGroupId,
+        OutputSageMakerIAMRoleArn: null,  // 导入时不推断，创建 HyperPod 时由 CF 创建
+        OutputS3BucketName: null,          // 导入时不推断，创建 HyperPod 时由 CF 创建
         OutputPrivateSubnetIds: cluster.resourcesVpcConfig.subnetIds ? cluster.resourcesVpcConfig.subnetIds.join(',') : null
       };
       
       // 返回EKS资源信息和HyperPod集群数据
       const result = {
         cloudFormationOutputs: resources,
-        hyperPodCluster: hyperPodClusterData // 完整的HyperPod集群数据或null
+        hyperPodCluster: hyperPodClusterData
       };
-      
-      // 尝试获取专用S3存储桶（可能不存在）
-      try {
-        const bucketName = `cluster-mount-${eksClusterName}`;
-        execSync(`aws s3api head-bucket --bucket ${bucketName} --region ${awsRegion}`, { encoding: 'utf8' });
-        resources.OutputS3BucketName = bucketName;
-      } catch (error) {
-        console.log(`S3 bucket cluster-mount-${eksClusterName} not found, skipping`);
-        resources.OutputS3BucketName = null;
-      }
       
       console.log('Fetched imported cluster resources:', Object.keys(result.cloudFormationOutputs));
       if (result.hyperPodCluster) {
@@ -330,13 +313,37 @@ class MetadataUtils {
 
   /**
    * 为导入集群保存资源信息到metadata（与创建集群格式对齐）
+   * @param {string} clusterTag
+   * @param {string} eksClusterName
+   * @param {string} awsRegion
+   * @param {string} hyperPodClusters - 用户指定的 HyperPod 集群名
+   * @param {Object} depsStackInfo - eks-hp-deps stack 输出（没有 HyperPod 时必须提供）
    */
-  static async saveImportedClusterResources(clusterTag, eksClusterName, awsRegion, hyperPodClusters = null) {
+  static async saveImportedClusterResources(clusterTag, eksClusterName, awsRegion, hyperPodClusters = null, depsStackInfo = null) {
     try {
       // 获取资源信息（包含HyperPod集群数据）
       const resourceData = await this.fetchImportedClusterResources(eksClusterName, awsRegion, hyperPodClusters);
       const resources = resourceData.cloudFormationOutputs;
       const hyperPodCluster = resourceData.hyperPodCluster;
+      
+      const hasHyperPod = hyperPodClusters && hyperPodClusters.trim();
+      
+      if (hasHyperPod && hyperPodCluster) {
+        // 有 HyperPod：从 HyperPod 集群获取 S3 和 Role
+        const hpVpcConfig = hyperPodCluster.VpcConfig || {};
+        // HyperPod 的 ExecutionRole 在 InstanceGroups 中
+        const executionRole = hyperPodCluster.InstanceGroups?.[0]?.ExecutionRole;
+        if (executionRole) {
+          resources.OutputSageMakerIAMRoleArn = executionRole;
+        }
+        console.log(`Using HyperPod cluster info: Role=${executionRole}`);
+      } else if (depsStackInfo && depsStackInfo.outputs) {
+        // 从 deps stack 获取 S3 和 Role
+        resources.OutputS3BucketName = depsStackInfo.outputs.S3BucketName;
+        resources.OutputSageMakerIAMRoleArn = depsStackInfo.outputs.SageMakerIAMRoleArn;
+        console.log(`Using deps stack outputs: S3=${depsStackInfo.outputs.S3BucketName}, Role=${depsStackInfo.outputs.SageMakerIAMRoleName}`);
+      }
+      // 导入的裸 EKS：S3 和 Role 保持 null，创建 HyperPod 时再处理
       
       // 读取现有的cluster_info.json
       const clusterInfo = this.getClusterInfo(clusterTag);
@@ -344,10 +351,10 @@ class MetadataUtils {
         throw new Error(`Cluster info not found for: ${clusterTag}`);
       }
       
-      // 添加CloudFormation输出格式的资源信息（不包含HyperPod子网）
+      // 添加CloudFormation输出格式的资源信息
       clusterInfo.cloudFormation = {
-        stackName: null, // 导入集群没有CF Stack
-        stackId: null,
+        stackName: depsStackInfo ? depsStackInfo.stackName : null,
+        stackId: depsStackInfo ? depsStackInfo.stackId : null,
         outputs: resources
       };
       

@@ -127,7 +127,7 @@ const VerlRecipePanel = ({ onLaunch, deploymentStatus, hyperPodInstanceTypes, in
       title={
         <Space>
           <RocketOutlined />
-          VERL Recipe
+          Verl Recipe
         </Space>
       }
       extra={

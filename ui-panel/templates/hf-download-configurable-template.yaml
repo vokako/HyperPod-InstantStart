@@ -47,7 +47,7 @@ spec:
               mountPath: /nvme
             - name: shm
               mountPath: /dev/shm
-          env:HF_TOKEN_ENV
+          env:
             - name: HF_HOME
               value: "/root/.cache/huggingface"
             - name: HF_HUB_ENABLE_HF_TRANSFER

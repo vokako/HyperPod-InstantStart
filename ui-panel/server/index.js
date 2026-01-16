@@ -13,7 +13,6 @@ require('dotenv').config({ path: path.join(__dirname, '../client/user.env') });
 
 // 引入工具模块
 const HyperPodDependencyManager = require('./utils/hyperPodDependencyManager');
-const { getCurrentRegion } = require('./utils/awsHelpers');
 const AWSHelpers = require('./utils/awsHelpers');
 const MetadataUtils = require('./utils/metadataUtils');
 const EKSServiceHelper = require('./utils/eksServiceHelper');
@@ -766,7 +765,7 @@ const clusterStatusCheckInterval = setInterval(async () => {
   }
 }, 60000);
 
-// 🔄 定时检查创建中的HyperPod集群状态 - 每60秒检查一次
+// 🔄 定时检查创建中的HyperPod集群状态 - 每20秒检查一次
 const hyperPodStatusCheckInterval = setInterval(async () => {
   try {
     const { execSync } = require('child_process');
@@ -797,9 +796,6 @@ const hyperPodStatusCheckInterval = setInterval(async () => {
             // 执行依赖配置
             try {
               await hyperpodApiManager.registerCompletedHyperPod(clusterTag);
-
-              // 配置成功，删除记录
-              hyperpodApiManager.updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
               
               broadcast({
                 type: 'hyperpod_creation_completed',
@@ -809,22 +805,17 @@ const hyperPodStatusCheckInterval = setInterval(async () => {
               });
             } catch (error) {
               console.error(`[Auto-Check] Failed to configure dependencies for ${clusterTag}:`, error);
-
-              // 配置失败，更新状态（保留记录，允许重试）
-              hyperpodApiManager.updateCreatingHyperPodStatus(clusterTag, {
-                ...clusterInfo,
-                phase: 'DEPENDENCY_CONFIG_FAILED',
-                error: error.message,
-                lastAttempt: new Date().toISOString()
-              });
               
               broadcast({
-                type: 'hyperpod_creation_failed',
-                status: 'error',
-                message: `Failed to configure HyperPod dependencies: ${error.message}`,
+                type: 'hyperpod_creation_completed',
+                status: 'warning',
+                message: `HyperPod cluster created, but dependency config failed: ${error.message}`,
                 clusterTag: clusterTag
               });
             }
+            
+            // 无论成功失败都删除记录（集群已创建成功）
+            hyperpodApiManager.updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
           }
         } catch (error) {
           console.error(`[Auto-Check] Error checking HyperPod ${clusterTag}:`, error);
@@ -834,7 +825,7 @@ const hyperPodStatusCheckInterval = setInterval(async () => {
   } catch (error) {
     console.error('[Auto-Check] Error in HyperPod status check:', error);
   }
-}, 60000);
+}, 20000);
 
 // ❤️ WebSocket心跳检测 - 每30秒检查一次连接状态
 const heartbeatInterval = setInterval(() => {
@@ -948,6 +939,8 @@ function stopAllLogStreams(ws) {
 
 const S3StorageManager = require('./s3StorageManager');
 const s3StorageManager = new S3StorageManager();
+const FSxStorageManager = require('./fsxStorageManager');
+const fsxStorageManager = new FSxStorageManager();
 
 // S3存储管理API
 app.get('/api/s3-storages', async (req, res) => {
@@ -985,12 +978,49 @@ app.delete('/api/s3-storages/:name', async (req, res) => {
   res.json(result);
 });
 
-// 增强的模型下载API
+// FSx存储管理API
+app.get('/api/fsx-storages', async (req, res) => {
+  const result = await fsxStorageManager.getStorages();
+  res.json(result);
+});
+
+app.post('/api/fsx-storages', async (req, res) => {
+  const result = await fsxStorageManager.createStorage(req.body);
+  if (result.success) {
+    broadcast({
+      type: 'fsx_storage_created',
+      status: 'success',
+      message: `FSx storage ${req.body.name} created successfully`
+    });
+  }
+  res.json(result);
+});
+
+app.delete('/api/fsx-storages/:name', async (req, res) => {
+  const result = await fsxStorageManager.deleteStorage(req.params.name);
+  if (result.success) {
+    broadcast({
+      type: 'fsx_storage_deleted',
+      status: 'success',
+      message: `FSx storage ${req.params.name} deleted successfully`
+    });
+  }
+  res.json(result);
+});
+
+// 获取FSx文件系统信息
+app.post('/api/fsx-info', async (req, res) => {
+  const { fileSystemId, region } = req.body;
+  const result = await fsxStorageManager.getFSxInfo(fileSystemId, region);
+  res.json(result);
+});
+
+// 增强的模型/数据集下载API
 app.post('/api/download-model-enhanced', async (req, res) => {
   const { modelId } = req.body;
 
   if (!modelId) {
-    return res.json({ success: false, error: 'Model ID is required' });
+    return res.json({ success: false, error: 'ID is required' });
   }
 
   const result = await s3StorageManager.applyEnhancedDownloadJob(req.body);
@@ -1000,8 +1030,8 @@ app.post('/api/download-model-enhanced', async (req, res) => {
     type: 'model_download',
     status: result.success ? 'success' : 'error',
     message: result.success
-      ? `Enhanced model download started: ${modelId}`
-      : `Failed to start enhanced model download: ${result.error}`,
+      ? `Download started: ${modelId}`
+      : `Failed to start download: ${result.error}`,
     jobName: result.jobName
   });
 
@@ -1160,7 +1190,7 @@ app.get('/api/cluster/cluster-available-instance', async (req, res) => {
       console.log(`Found ${result.data.karpenter.length} Karpenter EC2 instance types`);
       console.log(`Found ${result.data.karpenterHyperPod.length} Karpenter HyperPod instance types`);
     } catch (error) {
-      console.warn('Error fetching Karpenter instance types:', error.message);
+      // Karpenter 未安装时静默处理，不输出错误日志
     }
 
     // 只打印摘要，不打印完整 JSON
@@ -1340,64 +1370,26 @@ console.log('CIDR generation APIs loaded');
 // 获取集群信息API
 app.get('/api/cluster/info', async (req, res) => {
   try {
-    const { promisify } = require('util');
-    const execAsync = promisify(require('child_process').exec);
-    
     const activeCluster = clusterManager.getActiveCluster();
     if (!activeCluster) {
       return res.status(400).json({ success: false, error: 'No active cluster selected' });
     }
     
-    const initEnvsPath = path.join(__dirname, '../managed_clusters_info', activeCluster, 'config/init_envs');
-    const stackEnvsPath = path.join(__dirname, '../managed_clusters_info', activeCluster, 'config/stack_envs');
+    // 统一从 cluster_info.json 获取
+    const clusterInfoPath = path.join(__dirname, '../managed_clusters_info', activeCluster, 'metadata/cluster_info.json');
     
-    const getEnvVar = async (varName, filePath = initEnvsPath) => {
-      try {
-        const cmd = `source ${filePath} && echo $${varName}`;
-        const result = await execAsync(cmd, { shell: '/bin/bash' });
-        return result.stdout.trim();
-      } catch (error) {
-        return null;
-      }
-    };
-    
-    const eksClusterName = await getEnvVar('EKS_CLUSTER_NAME');
-    const region = await getEnvVar('AWS_REGION');
-    
-    // 优先从metadata获取VPC ID（适用于创建的集群）
-    const MetadataUtils = require('./utils/metadataUtils');
-    let vpcId = null;
-    
-    if (MetadataUtils.isCreatedCluster(activeCluster)) {
-      const eksInfo = MetadataUtils.getEKSClusterInfo(activeCluster);
-      vpcId = eksInfo.vpcId;
-      console.log(`Retrieved VPC ID from metadata for created cluster ${activeCluster}: ${vpcId}`);
+    if (!fs.existsSync(clusterInfoPath)) {
+      return res.status(404).json({ success: false, error: 'Cluster info not found' });
     }
     
-    // 如果metadata中没有，尝试从stack_envs获取
-    if (!vpcId) {
-      vpcId = await getEnvVar('VPC_ID', stackEnvsPath);
-    }
-    
-    // 如果仍然获取不到（导入的集群），通过AWS API获取
-    if (!vpcId && eksClusterName && region) {
-      try {
-        const cmd = `aws eks describe-cluster --name ${eksClusterName} --region ${region} --query 'cluster.resourcesVpcConfig.vpcId' --output text`;
-        const result = await execAsync(cmd);
-        vpcId = result.stdout.trim();
-        console.log(`Retrieved VPC ID via AWS API for cluster ${eksClusterName}: ${vpcId}`);
-      } catch (error) {
-        console.warn(`Failed to get VPC ID for cluster ${eksClusterName}:`, error.message);
-        vpcId = null;
-      }
-    }
+    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
     
     res.json({
       success: true,
       activeCluster,
-      eksClusterName,
-      region,
-      vpcId
+      eksClusterName: clusterInfo.eksCluster?.name || null,
+      region: clusterInfo.region || null,
+      vpcId: clusterInfo.eksCluster?.vpcId || null
     });
   } catch (error) {
     console.error('Error getting cluster info:', error);
@@ -1458,7 +1450,7 @@ app.get('/api/cluster/s3-buckets', async (req, res) => {
 // 获取当前AWS配置的region
 app.get('/api/aws/current-region', async (req, res) => {
   try {
-    const region = await getCurrentRegion();
+    const region = AWSHelpers.getCurrentRegion();
     res.json({
       success: true,
       region
@@ -1467,8 +1459,7 @@ app.get('/api/aws/current-region', async (req, res) => {
     console.error('Failed to get current AWS region:', error);
     res.status(500).json({
       success: false,
-      error: error.message,
-      region: 'us-west-1' // 提供默认值
+      error: error.message
     });
   }
 });
@@ -1759,17 +1750,12 @@ app.get('/api/cluster/karpenter/status', async (req, res) => {
     // 如果metadata中显示已安装，验证实际状态
     if (karpenterInfo?.installed) {
       try {
-        // 获取集群基本信息用于状态检查
-        const configDir = clusterManager.getClusterConfigDir(activeCluster);
-        const initEnvsPath = path.join(configDir, 'init_envs');
-
-        if (fs.existsSync(initEnvsPath)) {
-          const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-          const eksClusterMatch = envContent.match(/export EKS_CLUSTER_NAME=(.+)/);
-          const regionMatch = envContent.match(/export AWS_REGION=(.+)/);
-
-          const eksClusterName = eksClusterMatch ? eksClusterMatch[1] : null;
-          const region = regionMatch ? regionMatch[1] : 'us-west-2';
+        // 从 cluster_info.json 获取集群信息
+        const clusterInfo = await clusterManager.getClusterInfo(activeCluster);
+        
+        if (clusterInfo) {
+          const eksClusterName = clusterInfo.eksCluster?.name;
+          const region = clusterInfo.region;
 
           if (eksClusterName) {
             const runtimeStatus = await KarpenterManager.checkKarpenterStatus(eksClusterName, region);
@@ -1824,23 +1810,18 @@ app.get('/api/cluster/karpenter/nodes', async (req, res) => {
       });
     }
 
-    // 获取集群基本信息
-    const configDir = clusterManager.getClusterConfigDir(activeCluster);
-    const initEnvsPath = path.join(configDir, 'init_envs');
+    // 从 cluster_info.json 获取集群信息
+    const clusterInfo = await clusterManager.getClusterInfo(activeCluster);
 
-    if (!fs.existsSync(initEnvsPath)) {
+    if (!clusterInfo) {
       return res.status(400).json({
         success: false,
         error: 'Cluster configuration not found'
       });
     }
 
-    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-    const eksClusterMatch = envContent.match(/export EKS_CLUSTER_NAME=(.+)/);
-    const regionMatch = envContent.match(/export AWS_REGION=(.+)/);
-
-    const eksClusterName = eksClusterMatch ? eksClusterMatch[1] : null;
-    const region = regionMatch ? regionMatch[1] : 'us-west-2';
+    const eksClusterName = clusterInfo.eksCluster?.name;
+    const region = clusterInfo.region;
 
     if (!eksClusterName) {
       return res.status(400).json({

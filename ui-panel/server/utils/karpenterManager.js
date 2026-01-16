@@ -7,7 +7,7 @@ const { execSync, spawn } = require('child_process');
 const fs = require('fs-extra');
 const path = require('path');
 const CloudFormationManager = require('./cloudFormationManager');
-const AWSHelpers = require('./awsHelpers');
+const { getCurrentAccountId, getCurrentRegion } = require('./awsHelpers');
 
 class KarpenterManager {
   static KARPENTER_VERSION = '1.8.1';
@@ -136,8 +136,8 @@ class KarpenterManager {
       // 直接从metadata中获取资源信息
       let stackInfo = {
         CLUSTER_TAG: clusterTag,
-        REGION: AWSHelpers.getCurrentRegion(),
-        AWS_ACCOUNT_ID: AWSHelpers.getCurrentAccountId()
+        REGION: getCurrentRegion(),
+        AWS_ACCOUNT_ID: getCurrentAccountId()
       };
 
       // 从eksCluster字段获取基本信息
@@ -1184,11 +1184,9 @@ class KarpenterManager {
         status: 'Active'
       }));
     } catch (error) {
-      // Karpenter 未安装时优雅处理
-      if (error.message?.includes("doesn't have a resource type") ||
-          error.stderr?.includes("doesn't have a resource type")) {
-        console.log('Karpenter not installed: ec2nodeclass resource not available');
-      } else {
+      // Karpenter 未安装时静默处理
+      if (!error.message?.includes("doesn't have a resource type") &&
+          !error.stderr?.includes("doesn't have a resource type")) {
         console.error('Error getting NodeClasses:', error.message || error);
       }
       return [];
@@ -1332,11 +1330,9 @@ class KarpenterManager {
         status: 'Active'
       }));
     } catch (error) {
-      // Karpenter 未安装时优雅处理
-      if (error.message?.includes("doesn't have a resource type") ||
-          error.stderr?.includes("doesn't have a resource type")) {
-        console.log('Karpenter not installed: nodepool resource not available');
-      } else {
+      // Karpenter 未安装时静默处理
+      if (!error.message?.includes("doesn't have a resource type") &&
+          !error.stderr?.includes("doesn't have a resource type")) {
         console.error('Error getting NodePools:', error.message || error);
       }
       return [];

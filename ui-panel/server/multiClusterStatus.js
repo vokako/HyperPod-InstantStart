@@ -41,11 +41,10 @@ class MultiClusterStatus {
   // 检查 Step 1 状态 (CloudFormation)
   async checkStep1Status(clusterTag) {
     try {
-      // 读取集群的 init_envs 配置
-      const configDir = this.clusterManager.getClusterConfigDir(clusterTag);
-      const initEnvsPath = path.join(configDir, 'init_envs');
+      // 从 cluster_info.json 获取集群信息
+      const clusterInfo = await this.clusterManager.getClusterInfo(clusterTag);
       
-      if (!fs.existsSync(initEnvsPath)) {
+      if (!clusterInfo) {
         return {
           status: 'not_started',
           message: 'Configuration not found',
@@ -53,19 +52,7 @@ class MultiClusterStatus {
         };
       }
 
-      const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-      const clusterTagMatch = envContent.match(/export CLUSTER_TAG=(.+)/);
-      
-      if (!clusterTagMatch) {
-        return {
-          status: 'error',
-          message: 'Invalid configuration',
-          details: null
-        };
-      }
-
-      const extractedClusterTag = clusterTagMatch[1].replace(/['"]/g, '').trim();
-      const stackName = `full-stack-${extractedClusterTag}`;
+      const stackName = clusterInfo.cloudFormation?.stackName || `full-stack-${clusterTag}`;
 
       // 检查缓存
       const cachedStatus = this.readCache(clusterTag, 'step1');

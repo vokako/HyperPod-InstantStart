@@ -12,6 +12,7 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [storages, setStorages] = useState([]);
+  const [fsxStorages, setFsxStorages] = useState([]);
   const [instanceTypes, setInstanceTypes] = useState({ hyperpod: [], karpenterHyperPod: [], eksNodeGroup: [], karpenter: [] });
   const [instanceTypesLoading, setInstanceTypesLoading] = useState(false);
   const [repoType, setRepoType] = useState('model'); // 'model' or 'dataset'
@@ -28,8 +29,23 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
       }
     } catch (error) {
       console.error('Error fetching S3 storages:', error);
-      // 设置默认存储，避免界面卡住
       setStorages([]);
+    }
+  };
+
+  // 获取可用的FSx存储配置
+  const fetchFsxStorages = async () => {
+    try {
+      const response = await fetch('/api/fsx-storages');
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setFsxStorages(result.storages || []);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching FSx storages:', error);
+      setFsxStorages([]);
     }
   };
 
@@ -71,6 +87,7 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
 
   useEffect(() => {
     fetchStorages();
+    fetchFsxStorages();
     fetchInstanceTypes();
     
     // 暂时注释掉全局刷新监听，避免超时问题
@@ -133,8 +150,9 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
         message.error(`Download failed: ${result.error}`);
       }
     } catch (error) {
-      console.error('❌ Error downloading model:', error);
-      message.error('Failed to initiate model download');
+      const resourceLabel = repoType === 'dataset' ? 'dataset' : 'model';
+      console.error(`❌ Error downloading ${resourceLabel}:`, error);
+      message.error(`Failed to initiate ${resourceLabel} download`);
     } finally {
       setLoading(false);
     }
@@ -177,32 +195,44 @@ const EnhancedModelDownloadPanel = ({ onStorageChange }) => {
           </Radio.Group>
         </Form.Item>
 
-        {/* S3存储选择 */}
+        {/* 存储选择 */}
         <Form.Item
           name="s3Storage"
           label={
             <Space>
-              S3 Provision
+              Storage Provision
               <Button
                 type="text"
                 size="small"
                 icon={<ReloadOutlined />}
-                onClick={fetchStorages}
+                onClick={() => {
+                  fetchStorages();
+                  fetchFsxStorages();
+                }}
                 title="Refresh storage list"
               />
             </Space>
           }
-          rules={[{ required: true, message: 'Please select S3 provision' }]}
+          rules={[{ required: true, message: 'Please select storage provision' }]}
         >
           <Select
-            placeholder="Select S3 provision configuration"
+            placeholder="Select storage provision configuration"
             onChange={(value) => onStorageChange && onStorageChange(value)}
           >
-            {storages.map(storage => (
-              <Option key={storage.pvcName} value={storage.pvcName}>
-                {storage.name} ({storage.bucketName})
-              </Option>
-            ))}
+            <OptGroup label="S3 Storage">
+              {storages.map(storage => (
+                <Option key={storage.pvcName} value={storage.pvcName}>
+                  {storage.name} ({storage.bucketName})
+                </Option>
+              ))}
+            </OptGroup>
+            <OptGroup label="FSx Lustre Storage">
+              {fsxStorages.map(storage => (
+                <Option key={storage.pvcName} value={storage.pvcName}>
+                  {storage.name} ({storage.fileSystemId})
+                </Option>
+              ))}
+            </OptGroup>
           </Select>
         </Form.Item>
 

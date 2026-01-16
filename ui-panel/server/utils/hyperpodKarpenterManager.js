@@ -74,16 +74,15 @@ class HyperPodKarpenterManager {
 
     } catch (error) {
       // 如果是 CRD 不存在（Karpenter 未安装），静默返回空数据
-      if (error.message.includes('the server doesn\'t have a resource type') || 
+      if (error.message.includes('the server doesn\'t have a resource type') ||
           error.message.includes('NotFound')) {
-        console.log('HyperPod Karpenter not installed or CRD not found');
         return {
           nodePools: [],
           nodeClasses: [],
           managedInstanceGroups: []
         };
       }
-      
+
       // 其他错误记录详细信息
       console.error('Failed to get HyperPod Karpenter resources:', error.message);
       return {

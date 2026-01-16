@@ -180,18 +180,6 @@ class ManagedFeaturesManager {
    * 获取集群基本信息（内部方法）
    */
   async _getClusterInfo(activeClusterName) {
-    const configDir = this.clusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
-    
-    if (!fs.existsSync(initEnvsPath)) {
-      throw new Error('Cluster configuration not found');
-    }
-
-    // 解析 region
-    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-    const awsRegionMatch = envContent.match(/export AWS_REGION=(.+)/);
-    const region = awsRegionMatch ? awsRegionMatch[1] : 'us-west-2';
-
     // 读取 metadata
     const metadataDir = this.clusterManager.getClusterMetadataDir(activeClusterName);
     const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
@@ -207,9 +195,9 @@ class ManagedFeaturesManager {
     }
 
     return {
-      region,
+      region: clusterInfo.region,
       hyperPodCluster: clusterInfo.hyperPodCluster,
-      configDir,
+      configDir: this.clusterManager.getClusterConfigDir(activeClusterName),
       metadataDir
     };
   }

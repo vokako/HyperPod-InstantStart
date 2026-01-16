@@ -520,7 +520,8 @@ class S3StorageManager {
   // 生成增强的模型/数据集下载Job
   async generateEnhancedDownloadJob(config) {
     try {
-      const { modelId, resources, s3Storage, hfToken, instanceType, repoType } = config;
+      const { modelId, resources, s3Storage, hfToken, instanceType, repoType, storageType = 's3' } = config;
+      const YAML = require('yaml');
 
       // 生成短的模型标签，限制长度
       let modelTag = modelId.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
@@ -529,60 +530,69 @@ class S3StorageManager {
       }
 
       // 生成短的时间戳
-      const timestamp = Date.now().toString().slice(-8); // 只取最后8位
-      // Job名称根据类型区分: model-dl 或 dataset-dl
+      const timestamp = Date.now().toString().slice(-8);
       const jobPrefix = repoType === 'dataset' ? 'dataset-dl' : 'model-dl';
       const jobName = `${jobPrefix}-${modelTag}-${timestamp}`;
-
-      // 确保名称不超过63字符
       const finalJobName = jobName.length > 63 ? jobName.substring(0, 63) : jobName;
 
-      // 读取模板
+      // 读取模板（先做字符串替换占位符，再解析）
       const templatePath = path.join(__dirname, '../templates/hf-download-configurable-template.yaml');
-      let yamlContent = fs.readFileSync(templatePath, 'utf8');
+      let templateContent = fs.readFileSync(templatePath, 'utf8');
 
-      // 处理 repo-type 参数 (dataset 需要 --repo-type dataset)
+      // 第一步：字符串替换占位符（这些在 YAML 结构中）
       const repoTypeArg = repoType === 'dataset' ? '--repo-type dataset ' : '';
-
-      // 替换占位符
-      yamlContent = yamlContent
+      const mountPath = storageType === 'fsx' ? '/fsx' : '/s3';
+      
+      templateContent = templateContent
         .replace(/MODEL_TAG/g, finalJobName)
         .replace(/REPO_TYPE_ARG/g, repoTypeArg)
         .replace(/HF_MODEL_ID/g, modelId)
-        .replace(/S3_PVC_NAME/g, s3Storage);
+        .replace(/S3_PVC_NAME/g, s3Storage)
+        .replace(/\/s3\//g, `${mountPath}/`);
 
-      // 处理资源限制 (-1 表示不指定)
+      // 第二步：解析 YAML 对象，做类型安全的修改
+      const job = YAML.parse(templateContent);
+      const container = job.spec.template.spec.containers[0];
+
+      // 处理资源限制（对象操作，类型安全）
       if (resources.cpu === -1 && resources.memory === -1) {
-        yamlContent = yamlContent.replace(
-          /          resources:\n            requests:\n              cpu: "CPU_REQUEST"\n              memory: MEMORY_REQUEST\n            limits:\n              cpu: "CPU_LIMIT"\n              memory: MEMORY_LIMIT\n/,
-          ''
-        );
+        delete container.resources;
       } else {
-        yamlContent = yamlContent
-          .replace(/CPU_REQUEST/g, resources.cpu.toString())
-          .replace(/CPU_LIMIT/g, resources.cpu.toString())
-          .replace(/MEMORY_REQUEST/g, `${resources.memory}Gi`)
-          .replace(/MEMORY_LIMIT/g, `${resources.memory}Gi`);
+        container.resources = {
+          requests: {
+            cpu: resources.cpu.toString(),
+            memory: `${resources.memory}Gi`
+          },
+          limits: {
+            cpu: resources.cpu.toString(),
+            memory: `${resources.memory}Gi`
+          }
+        };
       }
 
-      // 处理HF Token
+      // 处理 HF Token（数组操作，避免字符串拼接）
       if (hfToken) {
-        yamlContent = yamlContent.replace(
-          'env:HF_TOKEN_ENV',
-          `env:\n            - name: HF_TOKEN\n              value: "${hfToken}"`
-        );
-      } else {
-        yamlContent = yamlContent.replace('env:HF_TOKEN_ENV', 'env:');
+        container.env.unshift({ name: 'HF_TOKEN', value: hfToken });
       }
 
-      // 处理 nodeSelector (instanceType)
+      // 处理 nodeSelector（对象操作）
       if (instanceType) {
-        yamlContent = yamlContent.replace(
-          /# nodeSelector:\n      #   sagemaker\.amazonaws\.com\/compute-type: hyperpod/,
-          `nodeSelector:\n        node.kubernetes.io/instance-type: ${instanceType}`
-        );
+        job.spec.template.spec.nodeSelector = {
+          'node.kubernetes.io/instance-type': instanceType
+        };
       }
 
+      // 处理 FSx 存储时的 mountPath 替换
+      if (storageType === 'fsx') {
+        const volumeMounts = container.volumeMounts;
+        const s3Mount = volumeMounts.find(vm => vm.mountPath === '/s3');
+        if (s3Mount) {
+          s3Mount.mountPath = '/fsx';
+        }
+      }
+
+      // 使用 blockQuote: 'literal' 保持 shell 脚本的块格式，避免换行问题
+      const yamlContent = YAML.stringify(job, { blockQuote: 'literal', lineWidth: 0 });
       return { success: true, yamlContent, jobName: finalJobName };
     } catch (error) {
       console.error('Error generating enhanced download job:', error);
@@ -623,9 +633,13 @@ class S3StorageManager {
       const resourceLabel = repoType === 'dataset' ? 'dataset' : 'model';
       console.log(`🚀 Starting enhanced ${resourceLabel} download: ${modelId}`);
       console.log(`📊 Resources: CPU=${resources?.cpu}, Memory=${resources?.memory}GB`);
-      console.log(`💾 S3 Storage: ${s3Storage}`);
+      console.log(`💾 Storage: ${s3Storage}`);
       console.log(`📦 Repo Type: ${repoType || 'model'}`);
       if (instanceType) console.log(`🖥️ Instance Type: ${instanceType}`);
+
+      // 判断存储类型（S3 或 FSx）
+      const storageType = s3Storage.startsWith('fsx-') ? 'fsx' : 's3';
+      console.log(`📁 Storage Type: ${storageType}`);
 
       // 生成增强的下载Job
       const jobResult = await this.generateEnhancedDownloadJob({
@@ -634,7 +648,8 @@ class S3StorageManager {
         resources,
         s3Storage,
         instanceType,
-        repoType
+        repoType,
+        storageType
       });
 
       if (!jobResult.success) {
@@ -663,16 +678,16 @@ class S3StorageManager {
         const { stdout, stderr } = await execAsync(`kubectl apply -f ${tempFile}`);
         fs.removeSync(tempFile);
 
-        console.log('✅ Enhanced model download job created successfully');
+        console.log(`✅ Download job created successfully`);
         return {
           success: true,
-          message: 'Enhanced model download job created successfully',
+          message: `Download job created successfully`,
           jobName: jobResult.jobName,
           deploymentFile: path.basename(deploymentFile)
         };
       } catch (kubectlError) {
         fs.removeSync(tempFile);
-        console.error('❌ Failed to create enhanced download job:', kubectlError.stderr || kubectlError.message);
+        console.error('❌ Failed to create download job:', kubectlError.stderr || kubectlError.message);
         return {
           success: false,
           error: kubectlError.stderr || kubectlError.message
@@ -680,7 +695,7 @@ class S3StorageManager {
       }
 
     } catch (error) {
-      console.error('❌ Error in enhanced model download:', error);
+      console.error('❌ Error in download:', error);
       return { success: false, error: error.message };
     }
   }

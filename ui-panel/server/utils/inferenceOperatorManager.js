@@ -3,6 +3,7 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 const fs = require('fs');
 const path = require('path');
+const { getCurrentAccountId, getCurrentRegion } = require('./awsHelpers');
 
 /**
  * HyperPod Inference Operator Manager
@@ -159,8 +160,7 @@ class InferenceOperatorManager {
     }
 
     // 获取 Account ID
-    const accountIdCmd = `aws sts get-caller-identity --query 'Account' --output text`;
-    const { stdout: accountId } = await execAsync(accountIdCmd);
+    const accountId = getCurrentAccountId();
 
     // 获取 OIDC ID
     const oidcCmd = `aws eks describe-cluster --name ${eksClusterName} --region ${region} --query "cluster.identity.oidc.issuer" --output text`;
@@ -647,7 +647,7 @@ class InferenceOperatorManager {
       --set keda.enabled=true \
       --set keda.podIdentity.aws.irsa.roleArn=${kedaRoleArn} \
       --set metrics.enabled=true \
-      --set fsx.enabled=true`;
+      --set fsx.enabled=false`;
 
     if (hyperPodClusterArn) {
       helmCmd += ` --set hyperpodClusterArn=${hyperPodClusterArn}`;
@@ -708,8 +708,7 @@ class InferenceOperatorManager {
     // 获取 Account ID
     let accountId;
     try {
-      const { stdout } = await execAsync(`aws sts get-caller-identity --query 'Account' --output text`);
-      accountId = stdout.trim();
+      accountId = getCurrentAccountId();
     } catch (error) {
       console.log('Failed to get account ID, skipping IAM cleanup');
       return;

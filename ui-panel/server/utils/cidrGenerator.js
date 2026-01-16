@@ -53,8 +53,8 @@ class CidrGenerator {
       // 解析VPC CIDR
       const [o1, o2] = vpcCidr.split('.').slice(0, 2);
       
-      // 为HyperPod生成独立的CIDR
-      const hyperPodPrivateSubnetCidr = await this.generateUniqueCidr(region, vpcCidr);
+      // HyperPod 计算子网使用 VPC 内的 /20 子网（4096 IPs）
+      const hyperPodPrivateSubnetCidr = `${o1}.${o2}.32.0/20`;
       
       return {
         vpcCidr,

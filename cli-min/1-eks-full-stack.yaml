@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EKS Control Plane Only (S3/LifeCycle/Role moved to 2-hypd-full.yaml)
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: {default: Resource Name Prefix}
+        Parameters: [ResourceNamePrefix]
+      - Label: {default: Toggle Nested Stacks}
+        Parameters: [CreateVPCStack, CreatePrivateSubnetStack, CreateSecurityGroupStack, CreateEKSClusterStack, CreateS3EndpointStack, CreateHelmChartStack]
+      - Label: {default: VPC Parameters}
+        Parameters: [VpcCIDR, PublicSubnet1CIDR, PublicSubnet2CIDR]
+      - Label: {default: Private Subnet Parameters}
+        Parameters: [AvailabilityZoneId, PrivateSubnet1CIDR]
+      - Label: {default: EKS Parameters}
+        Parameters: [EKSPrivateSubnet1CIDR, EKSPrivateSubnet2CIDR, KubernetesVersion, EKSClusterName, UsingSMCodeEditor]
+      - Label: {default: Helm Chart Parameters}
+        Parameters: [HelmRepoUrl, HelmRepoPath, Namespace, HelmRelease]
+      - Label: {default: Override Parameters (when not creating)}
+        Parameters: [VpcId, NatGatewayId, PrivateRouteTableId, SecurityGroupId]
+      - Label: {default: Workshop Only}
+        Parameters: [ParticipantRoleArn]
+
+Mappings:
+  AssetS3Buckets: 
+    eu-north-1: {BucketName: ws-assets-prod-iad-r-arn-580aeca3990cef5a}
+    ap-south-1: {BucketName: ws-assets-prod-iad-r-bom-431207042d319a2d}
+    eu-west-3: {BucketName: ws-assets-prod-iad-r-cdg-9e76383c31ad6229}
+    us-east-2: {BucketName: ws-assets-prod-iad-r-cmh-8d6e9c21a4dec77d}
+    eu-west-1: {BucketName: ws-assets-prod-iad-r-dub-85e3be25bd827406}
+    eu-central-1: {BucketName: ws-assets-prod-iad-r-fra-b129423e91500967}
+    sa-east-1: {BucketName: ws-assets-prod-iad-r-gru-527b8c19222c1182}
+    us-east-1: {BucketName: ws-assets-prod-iad-r-iad-ed304a55c2ca1aee}
+    ap-northeast-2: {BucketName: ws-assets-prod-iad-r-icn-ced060f0d38bc0b0}
+    ap-northeast-3: {BucketName: ws-assets-prod-iad-r-kix-c2a28ad4e55ea53a}
+    eu-west-2: {BucketName: ws-assets-prod-iad-r-lhr-cc4472a651221311}
+    ap-northeast-1: {BucketName: ws-assets-prod-iad-r-nrt-2cb4b4649d0e0f94}
+    us-west-2: {BucketName: ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0}
+    us-west-1: {BucketName: ws-assets-prod-iad-r-sfo-f61fc67057535f1b}
+    ap-southeast-1: {BucketName: ws-assets-prod-iad-r-sin-694a125e41645312}
+    ap-southeast-2: {BucketName: ws-assets-prod-iad-r-syd-b04c62a5f16f7b2e}
+    ca-central-1: {BucketName: ws-assets-prod-iad-r-yul-5c2977cd61bca1f3}
+
+Parameters:
+  ResourceNamePrefix:
+    Type: String
+    Default: sagemaker-hyperpod-eks
+
+  # VPC
+  VpcCIDR:
+    Type: String
+    Default: 10.192.0.0/16
+  PublicSubnet1CIDR:
+    Type: String
+    Default: 10.192.10.0/24
+  PublicSubnet2CIDR:
+    Type: String
+    Default: 10.192.11.0/24
+
+  # Private Subnet
+  AvailabilityZoneId:
+    Type: String
+    Default: usw2-az2
+    AllowedPattern: ^[a-z]{3,4}[0-9]-az[0-9]$
+  PrivateSubnet1CIDR:
+    Type: String
+    Default: 10.1.0.0/16
+
+  # EKS
+  KubernetesVersion:
+    Type: String
+    Default: '1.33'
+  EKSClusterName:
+    Type: String
+    Default: sagemaker-hyperpod-eks-cluster
+  EKSPrivateSubnet1CIDR:
+    Type: String
+    Default: 10.192.7.0/28
+  EKSPrivateSubnet2CIDR:
+    Type: String
+    Default: 10.192.8.0/28
+  UsingSMCodeEditor:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+  ParticipantRoleArn:
+    Type: String
+    Default: ''
+
+  # Helm
+  HelmRepoUrl:
+    Type: String
+    Default: https://github.com/aws/sagemaker-hyperpod-cli.git
+  HelmRepoPath:
+    Type: String
+    Default: helm_chart/HyperPodHelmChart
+  Namespace:
+    Type: String
+    Default: kube-system
+  HelmRelease:
+    Type: String
+    Default: hyperpod-dependencies
+
+  # Override Parameters
+  VpcId:
+    Type: String
+    Default: vpc-1234567890abcdef0
+  NatGatewayId:
+    Type: String
+    Default: nat-1234567890abcdef0
+  PrivateRouteTableId:
+    Type: String
+    Default: rtb-1234567890abcdef0
+  SecurityGroupId:
+    Type: String
+    Default: sg-1234567890abcdef0
+
+  # Condition Toggles
+  CreateVPCStack:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  CreatePrivateSubnetStack:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  CreateSecurityGroupStack:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  CreateEKSClusterStack:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  CreateS3EndpointStack:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  CreateHelmChartStack:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+Conditions:
+  CreateVPCStack: !Equals [!Ref CreateVPCStack, 'true']
+  CreatePrivateSubnetStack: !Equals [!Ref CreatePrivateSubnetStack, 'true']
+  CreateSecurityGroupStack: !Equals [!Ref CreateSecurityGroupStack, 'true']
+  CreateEKSClusterStack: !Equals [!Ref CreateEKSClusterStack, 'true']
+  CreateS3EndpointStack: !Equals [!Ref CreateS3EndpointStack, 'true']
+  CreateHelmChartStack: !Equals [!Ref CreateHelmChartStack, 'true']
+
+Resources:
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateVPCStack
+    Properties:
+      TemplateURL: !Sub
+        - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/vpc-stack.yaml'
+        - Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnet1CIDR: !Ref PublicSubnet1CIDR
+        PublicSubnet2CIDR: !Ref PublicSubnet2CIDR
+
+  PrivateSubnetStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreatePrivateSubnetStack
+    Properties:
+      TemplateURL: !Sub
+        - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/private-subnet-stack.yaml'
+        - Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        AvailabilityZoneId: !Ref AvailabilityZoneId
+        PrivateSubnet1CIDR: !Ref PrivateSubnet1CIDR
+        VpcId: !If [CreateVPCStack, !GetAtt VPCStack.Outputs.VpcId, !Ref VpcId]
+        NatGatewayId: !If [CreateVPCStack, !GetAtt VPCStack.Outputs.NatGatewayId, !Ref NatGatewayId]
+
+  SecurityGroupStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateSecurityGroupStack
+    Properties:
+      TemplateURL: !Sub
+        - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/security-group-stack.yaml'
+        - Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        VpcId: !If [CreateVPCStack, !GetAtt VPCStack.Outputs.VpcId, !Ref VpcId]
+        CreateNewSG: !If [CreateEKSClusterStack, 'true', 'false']
+        SecurityGroupId: !Ref SecurityGroupId
+
+  EKSClusterStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateEKSClusterStack
+    Properties:
+      TemplateURL: !Sub
+        - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/eks-cluster-stack.yaml'
+        - Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        EKSPrivateSubnet1CIDR: !Ref EKSPrivateSubnet1CIDR
+        EKSPrivateSubnet2CIDR: !Ref EKSPrivateSubnet2CIDR
+        KubernetesVersion: !Ref KubernetesVersion
+        EKSClusterName: !Ref EKSClusterName
+        UsingSMCodeEditor: !Ref UsingSMCodeEditor
+        ParticipantRoleArn: !Ref ParticipantRoleArn
+        VpcId: !If [CreateVPCStack, !GetAtt VPCStack.Outputs.VpcId, !Ref VpcId]
+        SecurityGroupId: !If [CreateSecurityGroupStack, !GetAtt SecurityGroupStack.Outputs.SecurityGroupId, !Ref SecurityGroupId]
+
+  S3EndpointStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateS3EndpointStack
+    Properties:
+      TemplateURL: !Sub
+        - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/s3-endpoint-stack.yaml'
+        - Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        VpcId: !If [CreateVPCStack, !GetAtt VPCStack.Outputs.VpcId, !Ref VpcId]
+        PrivateRouteTableId: !If [CreatePrivateSubnetStack, !GetAtt PrivateSubnetStack.Outputs.PrivateRouteTableId, !Ref PrivateRouteTableId]
+
+  HelmChartStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateHelmChartStack
+    Properties:
+      TemplateURL: !Sub
+        - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/helm-chart-stack.yaml'
+        - Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        HelmRepoUrl: !Ref HelmRepoUrl
+        HelmRepoPath: !Ref HelmRepoPath
+        Namespace: !Ref Namespace
+        HelmRelease: !Ref HelmRelease
+        CustomResourceS3Bucket: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+        LayerS3Key: '2433d39e-ccfe-4c00-9d3d-9917b729258e/lambda-layer.zip'
+        FunctionS3Key: '2433d39e-ccfe-4c00-9d3d-9917b729258e/function.zip'
+        EKSClusterName: !If [CreateEKSClusterStack, !GetAtt EKSClusterStack.Outputs.EKSClusterName, !Ref EKSClusterName]
+
+Outputs:
+  OutputVpcId:
+    Condition: CreateVPCStack
+    Value: !GetAtt VPCStack.Outputs.VpcId
+  OutputPrivateSubnetId:
+    Condition: CreatePrivateSubnetStack
+    Value: !GetAtt PrivateSubnetStack.Outputs.PrivateSubnetId
+  OutputSecurityGroupId:
+    Condition: CreateSecurityGroupStack
+    Value: !GetAtt SecurityGroupStack.Outputs.SecurityGroupId
+  OutputEKSClusterArn:
+    Condition: CreateEKSClusterStack
+    Value: !GetAtt EKSClusterStack.Outputs.EKSClusterArn
+  OutputEKSClusterName:
+    Condition: CreateEKSClusterStack
+    Value: !GetAtt EKSClusterStack.Outputs.EKSClusterName

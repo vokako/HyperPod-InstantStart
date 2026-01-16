@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs-extra');
 const path = require('path');
-const AWSHelpers = require('./awsHelpers');
+const { getCurrentAccountId, getCurrentRegion } = require('./awsHelpers');
 
 /**
  * HyperPod Karpenter 安装管理器
@@ -38,8 +38,8 @@ class HyperPodKarpenterInstaller {
       }
       
       // 获取 AWS 信息
-      const region = await AWSHelpers.getCurrentRegion();
-      const accountId = await AWSHelpers.getCurrentAccountId();
+      const region = getCurrentRegion();
+      const accountId = getCurrentAccountId();
       
       await fs.appendFile(logFile, `Region: ${region}\n`);
       await fs.appendFile(logFile, `Account ID: ${accountId}\n\n`);

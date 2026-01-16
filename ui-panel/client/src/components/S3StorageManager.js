@@ -224,7 +224,7 @@ const S3StorageManager = ({ onStorageChange }) => {
                   label="AWS Region"
                   rules={[{ required: true, message: 'Please input AWS region' }]}
                 >
-                  <Input placeholder="us-west-2" disabled />
+                  <Input disabled />
                 </Form.Item>
               </Col>
             </Row>

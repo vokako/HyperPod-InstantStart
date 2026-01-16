@@ -168,6 +168,15 @@ async function registerCompletedCluster(clusterTag, status = 'active') {
     const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
     fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
 
+    // ✅ 生成 cluster_envs 文件
+    const EnvInjector = require('./utils/envInjector');
+    try {
+      EnvInjector.updateClusterEnvFile(clusterTag);
+      console.log(`✅ Generated cluster_envs for ${clusterTag}`);
+    } catch (error) {
+      console.error(`Failed to generate cluster_envs for ${clusterTag}:`, error);
+    }
+
     // 更新 creation_metadata.json，添加 CloudFormation 输出
     if (Object.keys(stackOutputs).length > 0) {
       creationMetadata.cloudFormation.outputs = stackOutputs;
@@ -518,11 +527,19 @@ router.post('/create-eks', async (req, res) => {
     );
 
     // 创建 CloudFormation Stack
-    const stackResult = await CloudFormationManager.createEKSStack({
-      clusterTag,
-      awsRegion,
-      stackName
-    }, cidrConfig);
+    let stackResult;
+    try {
+      stackResult = await CloudFormationManager.createEKSStack({
+        clusterTag,
+        awsRegion,
+        stackName
+      }, cidrConfig);
+    } catch (stackError) {
+      // CloudFormation 创建失败，清理 metadata
+      console.error(`CloudFormation stack creation failed for ${clusterTag}:`, stackError);
+      cleanupCreatingMetadata(clusterTag);
+      throw stackError; // 重新抛出异常到外层 catch
+    }
 
     // 更新创建状态，添加 Stack ID
     fs.writeFileSync(
@@ -572,7 +589,8 @@ router.post('/create-eks', async (req, res) => {
       broadcast({
         type: 'cluster_creation_started',
         status: 'error',
-        message: `Failed to create EKS cluster: ${error.message}`
+        message: `Failed to create EKS cluster: ${error.message}`,
+        clusterTag: req.body.clusterTag
       });
     }
 

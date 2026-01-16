@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Row, Col, Card, Tabs, Space, Select } from 'antd';
-import { DownloadOutlined, DatabaseOutlined, SettingOutlined } from '@ant-design/icons';
+import { DownloadOutlined, DatabaseOutlined, SettingOutlined, CloudServerOutlined } from '@ant-design/icons';
 import EnhancedModelDownloadPanel from './EnhancedModelDownloadPanel';
 import S3StorageManager from './S3StorageManager';
+import FSxStorageManager from './FSxStorageManager';
 import S3StoragePanel from './S3StoragePanel';
 
 const { TabPane } = Tabs;
@@ -72,6 +73,18 @@ const EnhancedModelManagement = () => {
               key="storage-config"
             >
               <S3StorageManager onStorageChange={fetchAvailableStorages} />
+            </TabPane>
+
+            <TabPane
+              tab={
+                <Space>
+                  <CloudServerOutlined />
+                  FSx Lustre Config
+                </Space>
+              }
+              key="fsx-config"
+            >
+              <FSxStorageManager onStorageChange={fetchAvailableStorages} />
             </TabPane>
           </Tabs>
         </Card>

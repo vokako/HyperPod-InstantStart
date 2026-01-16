@@ -313,30 +313,40 @@ function generateHybridNodeSelectorTerms(instanceTypes) {
   const hyperpodTypes = instanceTypes.filter(t => t.startsWith('ml.'));
   const gpuTypes = instanceTypes.filter(t => !t.startsWith('ml.'));
 
-  let nodeSelectorTerms = [];
+  const nodeSelectorTerms = [];
 
-  // HyperPod 节点选择器（原生 + Karpenter 都有 sagemaker.amazonaws.com/compute-type 标签）
+  // HyperPod 节点选择器
   if (hyperpodTypes.length > 0) {
-    nodeSelectorTerms.push(`            # HyperPod 节点（原生 + Karpenter）
-            - matchExpressions:
-              - key: sagemaker.amazonaws.com/compute-type
-                operator: In
-                values: ["hyperpod"]
-              - key: node.kubernetes.io/instance-type
-                operator: In
-                values: [${hyperpodTypes.map(t => `"${t}"`).join(', ')}]`);
+    nodeSelectorTerms.push({
+      matchExpressions: [
+        {
+          key: 'sagemaker.amazonaws.com/compute-type',
+          operator: 'In',
+          values: ['hyperpod']
+        },
+        {
+          key: 'node.kubernetes.io/instance-type',
+          operator: 'In',
+          values: hyperpodTypes
+        }
+      ]
+    });
   }
 
-  // EC2 节点选择器条件 (EKS NodeGroup + Karpenter EC2)
+  // EC2 节点选择器
   if (gpuTypes.length > 0) {
-    nodeSelectorTerms.push(`            # EC2 GPU 节点 (EKS NodeGroup + Karpenter)
-            - matchExpressions:
-              - key: node.kubernetes.io/instance-type
-                operator: In
-                values: [${gpuTypes.map(t => `"${t}"`).join(', ')}]`);
+    nodeSelectorTerms.push({
+      matchExpressions: [
+        {
+          key: 'node.kubernetes.io/instance-type',
+          operator: 'In',
+          values: gpuTypes
+        }
+      ]
+    });
   }
 
-  return nodeSelectorTerms.join('\n');
+  return nodeSelectorTerms;
 }
 
 /**
@@ -363,32 +373,34 @@ function generateHybridNodeSelectorTerms(instanceTypes) {
  * // 返回包含 GPU、HAMi GPU 内存、CPU、Memory 的完整 resources 配置
  */
 function generateResourcesSection({ gpuCount, gpuMemory = -1, cpuRequest = -1, memoryRequest = -1 }) {
-  const limits = [`nvidia.com/gpu: ${gpuCount}`];
-  const requests = [`nvidia.com/gpu: ${gpuCount}`];
+  const resources = {
+    limits: {
+      'nvidia.com/gpu': gpuCount
+    },
+    requests: {
+      'nvidia.com/gpu': gpuCount
+    }
+  };
 
   // HAMi GPU 内存
   if (gpuMemory > 0) {
-    limits.push(`nvidia.com/gpumem: ${gpuMemory}`);
-    requests.push(`nvidia.com/gpumem: ${gpuMemory}`);
+    resources.limits['nvidia.com/gpumem'] = gpuMemory;
+    resources.requests['nvidia.com/gpumem'] = gpuMemory;
   }
 
   // CPU
   if (cpuRequest > 0) {
-    limits.push(`cpu: "${cpuRequest}"`);
-    requests.push(`cpu: "${cpuRequest}"`);
+    resources.limits.cpu = cpuRequest.toString();
+    resources.requests.cpu = cpuRequest.toString();
   }
 
   // Memory
   if (memoryRequest > 0) {
-    limits.push(`memory: ${memoryRequest}Gi`);
-    requests.push(`memory: ${memoryRequest}Gi`);
+    resources.limits.memory = `${memoryRequest}Gi`;
+    resources.requests.memory = `${memoryRequest}Gi`;
   }
 
-  return `resources:
-            limits:
-              ${limits.join('\n              ')}
-            requests:
-              ${requests.join('\n              ')}`;
+  return resources;
 }
 
 module.exports = {

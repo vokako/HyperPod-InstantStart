@@ -16,12 +16,12 @@ spec:
     dataSource:
       s3DataSource:
         s3DataType: S3Prefix
-        s3URI: s3://FUSE_S3_PATH/SM_JOB/SAGEMAKER_JOB_DIR/
+        s3URI: s3://FUSE_S3_PATH/smtj-recipes/SAGEMAKER_JOB_DIR/
         s3DataDistributionType: FullyReplicated
     compressionType: None
   
   outputDataConfig:
-    s3OutputPath: s3://FUSE_S3_PATH/SM_JOB/SAGEMAKER_JOB_DIR/output/
+    s3OutputPath: s3://FUSE_S3_PATH/smtj-recipes/SAGEMAKER_JOB_DIR/output/
   
   resourceConfig:
     instanceType: INSTANCE_TYPE
@@ -36,7 +36,7 @@ spec:
   enableManagedSpotTraining: SPOT_TRAINING_ENABLED
   
   checkpointConfig:
-    s3URI: s3://FUSE_S3_PATH/SM_JOB/SAGEMAKER_JOB_DIR/checkpoints/
+    s3URI: s3://FUSE_S3_PATH/smtj-recipes/SAGEMAKER_JOB_DIR/checkpoints/
     localPath: /opt/ml/checkpoints
   
   # hyperParameters:

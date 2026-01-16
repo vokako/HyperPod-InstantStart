@@ -36,7 +36,6 @@ import NodeGroupManager from './NodeGroupManagerRedux';
 import EksClusterCreationPanel from './EksClusterCreationPanel';
 import {
   fetchClusters,
-  fetchClusterDetails,
   switchCluster as switchClusterAction,
   checkDependenciesStatus,
   configureDependencies
@@ -44,7 +43,6 @@ import {
 import {
   selectActiveCluster,
   selectClustersList,
-  selectClusterDetails,
   selectDependenciesStatus,
   selectClusterLoading,
   selectClusterError,
@@ -207,7 +205,6 @@ const ClusterManagementRedux = () => {
   const clustersFromStore = useSelector(selectClustersList);
   const clusters = Array.isArray(clustersFromStore) ? clustersFromStore : [];
   const activeCluster = useSelector(selectActiveCluster);
-  const clusterDetails = useSelector(selectClusterDetails);
   const dependenciesStatus = useSelector(selectDependenciesStatus);
   const effectiveDependenciesStatus = useSelector(selectEffectiveDependenciesStatus);
   const loading = useSelector(selectClusterLoading);
@@ -245,20 +242,19 @@ const ClusterManagementRedux = () => {
 
       const result = await response.json();
       if (result.success) {
-        message.success(`Successfully imported cluster: ${values.eksClusterName}`);
+        message.success(`Successfully imported cluster: ${values.eksClusterName}. Please select it in Cluster Information to use.`);
         setShowImportModal(false);
         importForm.resetFields();
 
         // 刷新集群列表
         await dispatch(fetchClusters()).unwrap();
 
-        // 设置为活跃集群
-        await dispatch(switchClusterAction(values.eksClusterName)).unwrap();
+        // 不自动切换，让用户手动选择（与创建集群流程一致）
+        // await dispatch(switchClusterAction(values.eksClusterName)).unwrap();
 
-        // 刷新状态
-        setTimeout(() => {
-          dispatch(checkDependenciesStatus(values.eksClusterName));
-        }, 2000);
+        // setTimeout(() => {
+        //   dispatch(checkDependenciesStatus(values.eksClusterName));
+        // }, 2000);
 
       } else {
         message.error(`Failed to import cluster: ${result.error}`);
@@ -379,12 +375,8 @@ const ClusterManagementRedux = () => {
   useEffect(() => {
     if (activeCluster) {
       dispatch(checkDependenciesStatus(activeCluster));
-      // 如果没有集群详情，获取集群详情
-      if (!clusterDetails) {
-        dispatch(fetchClusterDetails(activeCluster));
-      }
     }
-  }, [activeCluster, clusterDetails, dispatch]);
+  }, [activeCluster, dispatch]);
 
   return (
     <>
@@ -532,15 +524,13 @@ const ClusterManagementRedux = () => {
                             }
                           }
 
-                          // 统一获取cluster tag和region
+                          // 统一从 cluster 对象获取所有信息
                           const clusterTag = cluster.clusterTag || 'N/A';
-                          const region = cluster.region || cluster.config?.awsRegion || 'N/A';
+                          const region = cluster.region || 'N/A';
+                          const eksClusterName = cluster.eksCluster?.name || 'N/A';
+                          const vpcId = cluster.eksCluster?.vpcId || 'N/A';
                           const creationType = cluster.type === 'imported' ? 'Imported' : 'Created';
                           const creationColor = cluster.type === 'imported' ? 'blue' : 'green';
-
-                          // 从API获取的详细信息
-                          const eksClusterName = clusterDetails?.eksClusterName || 'N/A';
-                          const vpcId = clusterDetails?.vpcId || 'N/A';
 
                           return (
                             <Card title="Cluster Details" size="small" className="theme-card analytics">

@@ -12,11 +12,19 @@ LMA_RECIPE_LLAMA_FACTORY_LAUNCHER=$LMA_RECIPE_LLAMA_FACTORY_DIR/src/llamafactory
 cd $LOCAL_WORKDIR
 cp -r ${LMF_RECIPE_RUN_PATH%/}/* ./
 
-echo "处理 LlamaFactory Yaml 适配"
+if [ ! -d "LLaMA-Factory" ]; then
+    echo "LLaMA-Factory directory not found, cloning from GitHub..."
+    git clone --depth 1 -b v0.9.3 https://github.com/hiyouga/LLaMA-Factory.git
+fi
+
+cd LLaMA-Factory && pip install -e ".[torch,metrics]" --no-build-isolation
+cd ..
+
+echo "LlamaFactory Yaml adapt"
 
 python lmf_process_train_yaml.py
 
-echo "完成 LlamaFactory Yaml 适配"
+echo "LlamaFactory Yaml adapt done."
 
 # runtag=$(date '+%Y%m%d_%H%M%S')
 # export MLFLOW_RUN_NAME="run-$runtag"

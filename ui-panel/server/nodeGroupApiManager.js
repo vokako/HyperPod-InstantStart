@@ -55,23 +55,15 @@ router.get('/nodegroups', async (req, res) => {
       return res.status(400).json({ error: 'No active cluster found' });
     }
 
-    // 读取集群配置文件
-    const configDir = localClusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
+    // 从 cluster_info.json 获取集群信息
+    const clusterInfo = await localClusterManager.getClusterInfo(activeClusterName);
 
-    if (!fs.existsSync(initEnvsPath)) {
-      return res.status(400).json({ error: 'Cluster configuration file not found' });
+    if (!clusterInfo) {
+      return res.status(400).json({ error: 'Cluster configuration not found' });
     }
 
-    // 解析init_envs文件 - 使用shell source方式
-    const getEnvVar = async (varName) => {
-      const cmd = `source ${initEnvsPath} && echo $${varName}`;
-      const result = await execAsync(cmd, { shell: '/bin/bash' });
-      return result.stdout.trim();
-    };
-
-    const clusterName = await getEnvVar('EKS_CLUSTER_NAME') || activeClusterName;
-    const region = await getEnvVar('AWS_REGION') || 'us-west-2';
+    const clusterName = clusterInfo.eksCluster?.name || activeClusterName;
+    const region = clusterInfo.region;
 
     // 获取EKS节点组
     const eksCmd = `aws eks list-nodegroups --cluster-name ${clusterName} --region ${region} --output json`;
@@ -135,10 +127,12 @@ router.get('/nodegroups', async (req, res) => {
             const hpData = await AWSHelpers.describeHyperPodCluster(hpClusterName, region);
 
             for (const instanceGroup of hpData.InstanceGroups || []) {
-              // 判断 Capacity Type: 如果有 CapacityRequirements.Spot 则为 Spot，否则为 On-Demand
+              // 判断 Capacity Type: Spot > Training Plan > On-Demand
               let capacityType = 'on-demand';
               if (instanceGroup.CapacityRequirements?.Spot) {
                 capacityType = 'spot';
+              } else if (instanceGroup.TrainingPlanArn) {
+                capacityType = 'training-plan';
               }
 
               hyperPodGroups.push({
@@ -200,22 +194,15 @@ router.put('/nodegroups/:name/scale', async (req, res) => {
     }
 
     // 读取集群配置文件
-    const configDir = localClusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
+    // 从 cluster_info.json 获取集群信息
+    const clusterInfo = await localClusterManager.getClusterInfo(activeClusterName);
 
-    if (!fs.existsSync(initEnvsPath)) {
-      return res.status(400).json({ error: 'Cluster configuration file not found' });
+    if (!clusterInfo) {
+      return res.status(400).json({ error: 'Cluster configuration not found' });
     }
 
-    // 解析init_envs文件 - 使用shell source方式
-    const getEnvVar = async (varName) => {
-      const cmd = `source ${initEnvsPath} && echo $${varName}`;
-      const result = await execAsync(cmd, { shell: '/bin/bash' });
-      return result.stdout.trim();
-    };
-
-    const clusterName = await getEnvVar('EKS_CLUSTER_NAME') || activeClusterName;
-    const region = await getEnvVar('AWS_REGION') || 'us-west-2';
+    const clusterName = clusterInfo.eksCluster?.name || activeClusterName;
+    const region = clusterInfo.region;
 
     const cmd = `aws eks update-nodegroup-config --cluster-name ${clusterName} --nodegroup-name ${name} --scaling-config minSize=${minSize},maxSize=${maxSize},desiredSize=${desiredSize} --region ${region}`;
 
@@ -260,11 +247,9 @@ router.delete('/nodegroup/:nodeGroupName', async (req, res) => {
       return res.status(400).json({ success: false, error: 'No active cluster selected' });
     }
 
-    // 获取EKS集群名称
-    const initEnvsPath = path.join(__dirname, '../managed_clusters_info', activeCluster, 'config/init_envs');
-    const cmd = `source ${initEnvsPath} && echo $EKS_CLUSTER_NAME`;
-    const result = await execAsync(cmd, { shell: '/bin/bash' });
-    const eksClusterName = result.stdout.trim();
+    // 从 cluster_info.json 获取 EKS 集群名称
+    const clusterInfo = await clusterManager.getClusterInfo(activeCluster);
+    const eksClusterName = clusterInfo?.eksCluster?.name;
 
     if (!eksClusterName) {
       return res.status(400).json({ success: false, error: 'EKS cluster name not found' });

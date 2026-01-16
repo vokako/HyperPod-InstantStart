@@ -124,9 +124,14 @@ class ClusterStatusV2 {
         
         const allPendingPodsData = JSON.parse(allPendingPodsInfo);
         if (allPendingPodsData.items && Array.isArray(allPendingPodsData.items)) {
-          // 只统计未调度的 Pending Pod（没有 spec.nodeName 的）
+          // 只统计未调度且 nodeSelector 匹配当前节点的 Pending Pod
           pendingGPU = allPendingPodsData.items
-            .filter(pod => !pod.spec?.nodeName)  // 只统计未调度的
+            .filter(pod => !pod.spec?.nodeName)
+            .filter(pod => {
+              const selector = pod.spec?.nodeSelector;
+              if (!selector) return true;
+              return Object.entries(selector).every(([k, v]) => labels[k] === v);
+            })
             .reduce((sum, pod) => {
               if (pod.spec?.containers) {
                 return sum + pod.spec.containers.reduce((containerSum, container) => {

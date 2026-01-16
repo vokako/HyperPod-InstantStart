@@ -741,6 +741,7 @@ const TrainingHistoryPanel = () => {
         className="theme-card analytics"
         extra={
           <Space>
+            {/* TODO: 暂时隐藏，待支持新的 MLflow App 后恢复
             <Button
               icon={<CloudServerOutlined />}
               onClick={showCreateTrackingServerModal}
@@ -748,6 +749,7 @@ const TrainingHistoryPanel = () => {
             >
               Create Tracking Server
             </Button>
+            */}
             <Button
               icon={<SettingOutlined />}
               onClick={showConfigModal}

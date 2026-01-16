@@ -65,14 +65,8 @@ class HyperPodDependencyManager {
         throw new Error(`Cluster config directory not found: ${configDir}`);
       }
 
-      // 等待HyperPod集群就绪
-      await this.waitForHyperPodReady(configDir);
-
       // 配置 HyperPod Pod Identity 权限
       await this.configureHyperPodPodIdentity(configDir);
-
-      // 安装HyperPod专用依赖
-      // await this.installHyperPodDependencies(configDir);
 
       console.log(`Successfully configured HyperPod dependencies for cluster: ${clusterTag}`);
       return { success: true };
@@ -89,7 +83,7 @@ class HyperPodDependencyManager {
   static async waitForHyperPodReady(configDir) {
     console.log('Waiting for HyperPod cluster to be ready...');
 
-    const waitCmd = `cd ${configDir} && bash -c 'source init_envs &&
+    const waitCmd = `cd ${configDir} && bash -c 'source cluster_envs &&
 
     echo "Checking HyperPod cluster status..."
 
@@ -156,7 +150,7 @@ class HyperPodDependencyManager {
   static async cleanupFailedInstallations(configDir) {
     console.log('Checking and cleaning up previous installations...');
 
-    const commands = `cd ${configDir} && bash -c 'source init_envs && source stack_envs &&
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs &&
 
     echo "=========================================="
     echo "Checking Training Operator addon status"
@@ -222,7 +216,7 @@ class HyperPodDependencyManager {
   static async waitForCertManagerReady(configDir) {
     console.log('Waiting for cert-manager to be ready...');
 
-    const commands = `cd ${configDir} && bash -c 'source init_envs && source stack_envs &&
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs &&
 
     echo "=========================================="
     echo "Step 1: Check cert-manager addon status"
@@ -294,7 +288,7 @@ class HyperPodDependencyManager {
   static async installTrainingOperatorAddon(configDir) {
     console.log('Installing HyperPod Training Operator addon...');
 
-    const commands = `cd ${configDir} && bash -c 'source init_envs && source stack_envs &&
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs &&
 
     echo "=========================================="
     echo "Installing Training Operator Addon"
@@ -397,7 +391,7 @@ class HyperPodDependencyManager {
   static async verifyTrainingOperatorInstallation(configDir) {
     console.log('Verifying Training Operator installation...');
 
-    const commands = `cd ${configDir} && bash -c 'source init_envs && source stack_envs &&
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs &&
 
     echo "=========================================="
     echo "Verifying Installation"
@@ -428,13 +422,8 @@ class HyperPodDependencyManager {
    */
   static async checkHyperPodDependencyStatus(configDir) {
     try {
-      const checkCmd = `cd ${configDir} && bash -c 'source init_envs &&
-      if [ -f "stack_envs" ]; then
-        source stack_envs
+      const checkCmd = `cd ${configDir} && bash -c 'source cluster_envs &&
         aws eks describe-addon --cluster-name $EKS_CLUSTER_NAME --addon-name amazon-sagemaker-hyperpod-training-operator --region $AWS_REGION --query "addon.status" --output text 2>/dev/null || echo "NOT_INSTALLED"
-      else
-        echo "NO_CLOUDFORMATION"
-      fi
       '`;
 
       const result = execSync(checkCmd, { encoding: 'utf8' }).trim();
@@ -461,15 +450,11 @@ class HyperPodDependencyManager {
     try {
       console.log('Cleaning up HyperPod dependencies...');
 
-      const cleanupCmd = `cd ${configDir} && bash -c 'source init_envs &&
-      if [ -f "stack_envs" ]; then
-        source stack_envs
+      const cleanupCmd = `cd ${configDir} && bash -c 'source cluster_envs &&
+      source cluster_envs &&
         aws eks delete-addon --cluster-name $EKS_CLUSTER_NAME --addon-name amazon-sagemaker-hyperpod-training-operator --region $AWS_REGION || true
         aws eks delete-pod-identity-association --cluster-name $EKS_CLUSTER_NAME --association-arn $(aws eks list-pod-identity-associations --cluster-name $EKS_CLUSTER_NAME --region $AWS_REGION --query "associations[?serviceAccount==\`hp-training-operator-controller-manager\`].associationArn" --output text) --region $AWS_REGION || true
         echo "HyperPod dependencies cleanup completed"
-      else
-        echo "No CloudFormation stack found, skipping cleanup"
-      fi
       '`;
 
       execSync(cleanupCmd, { stdio: 'inherit' });
@@ -488,7 +473,7 @@ class HyperPodDependencyManager {
   static async configureHyperPodPodIdentity(clusterConfigDir) {
     console.log('Configuring HyperPod Pod Identity permissions...');
 
-    const commands = `cd ${clusterConfigDir} && bash -c 'source init_envs && source stack_envs &&
+    const commands = `cd ${clusterConfigDir} && bash -c 'source cluster_envs &&
 
     EXECUTION_ROLE=\${EXECUTION_ROLE:-\$SAGEMAKER_ROLE_ARN}
     if [ -z "\$EXECUTION_ROLE" ]; then
@@ -552,7 +537,7 @@ class HyperPodDependencyManager {
   static async waitForLoadBalancerWebhook(configDir) {
     console.log('Waiting for AWS Load Balancer Controller webhook...');
 
-    const commands = `cd ${configDir} && bash -c 'source init_envs && source stack_envs &&
+    const commands = `cd ${configDir} && bash -c 'source cluster_envs &&
     kubectl wait --for=condition=available deployment/aws-load-balancer-controller -n kube-system --timeout=300s || true
     for i in {1..30}; do
         ENDPOINTS=\$(kubectl get endpoints aws-load-balancer-webhook-service -n kube-system -o jsonpath="{.subsets[*].addresses[*].ip}" 2>/dev/null)

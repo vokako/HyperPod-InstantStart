@@ -123,43 +123,76 @@ async function registerCompletedHyperPod(clusterTag) {
   try {
     console.log(`HyperPod cluster ${clusterTag} creation completed`);
 
-    // 配置 HyperPod 自定义依赖
-    await HyperPodDependencyManager.configureHyperPodDependencies(clusterTag, clusterManager);
-
-    // 将创建的 HyperPod 集群信息添加到 metadata
     const metadataDir = clusterManager.getClusterMetadataDir(clusterTag);
     const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
 
-    if (fs.existsSync(clusterInfoPath)) {
-      const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
-
-      // 获取 HyperPod 集群名称（使用命名约定）
-      const hyperPodClusterName = `hp-cluster-${clusterTag}`;
-
-      try {
-        const region = clusterInfo.region || 'us-west-2';
-
-        const hpCmd = `aws sagemaker describe-cluster --cluster-name ${hyperPodClusterName} --region ${region} --output json`;
-        const hpResult = await execAsync(hpCmd);
-        const hpData = JSON.parse(hpResult.stdout);
-
-        // 添加来源标识
-        hpData.source = 'ui-created';
-
-        // 保存完整的 HyperPod 集群信息
-        clusterInfo.hyperPodCluster = hpData;
-        clusterInfo.lastModified = new Date().toISOString();
-
-        fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
-        console.log(`Saved complete HyperPod cluster info for ${clusterTag} (ui-created)`);
-
-      } catch (error) {
-        console.warn('Failed to get HyperPod cluster details for metadata:', error.message);
-      }
+    if (!fs.existsSync(clusterInfoPath)) {
+      throw new Error(`Cluster info not found: ${clusterInfoPath}`);
     }
+
+    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
+    const region = clusterInfo.region;
+
+    // 获取 HyperPod CloudFormation Stack 输出
+    const hyperPodConfigPath = path.join(metadataDir, 'hyperpod-config.json');
+    if (!fs.existsSync(hyperPodConfigPath)) {
+      throw new Error(`HyperPod config not found: ${hyperPodConfigPath}`);
+    }
+
+    const hyperPodConfig = JSON.parse(fs.readFileSync(hyperPodConfigPath, 'utf8'));
+    const stackName = hyperPodConfig.hyperPodCluster?.stackName || hyperPodConfig.stackName;
+    
+    const stackOutputs = await CloudFormationManager.getStackOutputs(stackName, region);
+    
+    // 从 CloudFormation 输出获取 HyperPod 集群信息
+    const hyperPodClusterName = stackOutputs.HyperPodClusterName;
+    const hyperPodClusterArn = stackOutputs.HyperPodClusterArn;
+    
+    if (!hyperPodClusterName) {
+      throw new Error('HyperPodClusterName not found in CloudFormation outputs');
+    }
+
+    // 更新 cluster_info.json
+    clusterInfo.cloudFormation = clusterInfo.cloudFormation || {};
+    clusterInfo.cloudFormation.outputs = clusterInfo.cloudFormation.outputs || {};
+    
+    if (stackOutputs.S3BucketName) {
+      clusterInfo.cloudFormation.outputs.OutputS3BucketName = stackOutputs.S3BucketName;
+      clusterInfo.eksCluster = clusterInfo.eksCluster || {};
+      clusterInfo.eksCluster.s3BucketName = stackOutputs.S3BucketName;
+    }
+    if (stackOutputs.SageMakerIAMRoleArn) {
+      clusterInfo.cloudFormation.outputs.OutputSageMakerIAMRoleArn = stackOutputs.SageMakerIAMRoleArn;
+      clusterInfo.eksCluster = clusterInfo.eksCluster || {};
+      clusterInfo.eksCluster.sageMakerRoleArn = stackOutputs.SageMakerIAMRoleArn;
+    }
+    if (stackOutputs.SageMakerIAMRoleName) {
+      clusterInfo.cloudFormation.outputs.OutputSageMakerIAMRoleName = stackOutputs.SageMakerIAMRoleName;
+    }
+
+    // 获取 HyperPod 集群详细信息
+    const hpCmd = `aws sagemaker describe-cluster --cluster-name ${hyperPodClusterName} --region ${region} --output json`;
+    const hpResult = await execAsync(hpCmd);
+    const hpData = JSON.parse(hpResult.stdout);
+    hpData.source = 'ui-created';
+
+    clusterInfo.hyperPodCluster = hpData;
+    clusterInfo.lastModified = new Date().toISOString();
+
+    fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfo, null, 2));
+    console.log(`Updated cluster metadata with HyperPod info for ${clusterTag}`);
+    
+    // 更新 cluster_envs（添加 HyperPod 变量）
+    const EnvInjector = require('./utils/envInjector');
+    EnvInjector.updateClusterEnvFile(clusterTag);
+    console.log(`Updated cluster_envs with HyperPod variables for ${clusterTag}`);
+
+    // 配置 HyperPod 依赖（此时 cluster_envs 已包含所需变量）
+    await HyperPodDependencyManager.configureHyperPodDependencies(clusterTag, clusterManager);
 
   } catch (error) {
     console.error('Error registering completed HyperPod:', error);
+    throw error;
   }
 }
 
@@ -182,6 +215,15 @@ router.post('/create-hyperpod', async (req, res) => {
       return res.status(400).json({ success: false, error: 'No active cluster selected' });
     }
 
+    // ⭐ 创建 HyperPod 前，先更新 cluster_envs（读取用户可能设置的 S3/Role）
+    const EnvInjector = require('./utils/envInjector');
+    try {
+      EnvInjector.updateClusterEnvFile(activeCluster);
+      console.log(`✅ Updated cluster_envs before HyperPod creation for ${activeCluster}`);
+    } catch (error) {
+      console.warn(`Failed to update cluster_envs: ${error.message}`);
+    }
+
     // 检查 kubectl 连通性
     try {
       console.log('Testing kubectl connectivity...');
@@ -198,6 +240,7 @@ router.post('/create-hyperpod', async (req, res) => {
     // 获取 EKS 集群信息
     const eksClusterInfo = MetadataUtils.getEKSClusterInfo(activeCluster);
     const region = MetadataUtils.getClusterRegion(activeCluster);
+    const clusterInfo = MetadataUtils.getClusterInfo(activeCluster);
 
     if (!eksClusterInfo || !region) {
       return res.status(400).json({
@@ -212,9 +255,9 @@ router.post('/create-hyperpod', async (req, res) => {
     const ClusterDependencyManager = require('./utils/clusterDependencyManager');
     const natGatewayId = await ClusterDependencyManager.getNatGatewayId(eksClusterInfo.vpcId, region);
 
-    // 从 SageMaker 角色 ARN 中提取角色名称
-    const sageMakerRoleName = eksClusterInfo.sageMakerRoleArn ?
-      eksClusterInfo.sageMakerRoleArn.split('/').pop() : null;
+    // 判断是否需要创建 S3/Role（导入的裸 EKS 没有这些资源）
+    const hasExistingS3 = !!eksClusterInfo.s3BucketName;
+    const hasExistingRole = !!eksClusterInfo.sageMakerRoleArn;
 
     // 构建 EKS 基础设施信息
     const eksInfrastructureInfo = {
@@ -222,16 +265,16 @@ router.post('/create-hyperpod', async (req, res) => {
       SECURITY_GROUP_ID: eksClusterInfo.securityGroupId,
       PRIVATE_SUBNET_ID: eksClusterInfo.privateSubnetIds,
       EKS_CLUSTER_NAME: eksClusterInfo.name,
-      SAGEMAKER_ROLE_ARN: eksClusterInfo.sageMakerRoleArn,
-      SAGEMAKER_ROLE_NAME: sageMakerRoleName,
-      S3_BUCKET_NAME: eksClusterInfo.s3BucketName,
+      // 如果有现有资源则传递，否则留空让 CF 创建
+      SAGEMAKER_ROLE_NAME: hasExistingRole ? eksClusterInfo.sageMakerRoleArn.split('/').pop() : '',
+      S3_BUCKET_NAME: hasExistingS3 ? eksClusterInfo.s3BucketName : '',
       NAT_GATEWAY_ID: natGatewayId
     };
 
     // 生成 HyperPod 配置
     const timestamp = new Date().toISOString().replace(/[-:.T]/g, '').slice(0, 14);
-    const clusterTag = userConfig.clusterTag;
-    const hyperPodStackName = `hyperpod-${clusterTag}-${timestamp}`;
+    const hyperPodTag = userConfig.hyperPodTag;
+    const hyperPodStackName = `hyperpod-${hyperPodTag}-${timestamp}`;
     const eksClusterTag = activeCluster;
     const hyperPodClusterName = `hp-cluster-${eksClusterTag}`;
 
@@ -304,14 +347,14 @@ router.post('/create-hyperpod', async (req, res) => {
 
     // 构建 HyperPod 配置
     const hyperPodConfig = {
-      ResourceNamePrefix: clusterTag,
+      ResourceNamePrefix: hyperPodTag,
       AvailabilityZoneId: availabilityZoneId,
       PrivateSubnet1CIDR: hyperPodPrivateSubnetCidr,
       HyperPodClusterName: hyperPodClusterName,
       NodeRecovery: 'None',
       UseContinuousNodeProvisioningMode: 'true',
       CreateAcceleratedInstanceGroup: 'true',
-      AcceleratedInstanceGroupName: `hpig-${clusterTag}`,
+      AcceleratedInstanceGroupName: `${hyperPodTag}-ig`,
       AcceleratedInstanceType: userConfig.AcceleratedInstanceType,
       AcceleratedInstanceCount: userConfig.AcceleratedInstanceCount,
       AcceleratedEBSVolumeSize: userConfig.AcceleratedEBSVolumeSize,
@@ -349,6 +392,7 @@ router.post('/create-hyperpod', async (req, res) => {
       stackName: hyperPodStackName,
       stackId: stackResult.stackId,
       region: region,
+      hyperPodClusterName: hyperPodClusterName,  // ← 添加集群名称
       userConfig: userConfig,
       infrastructureInfo: eksInfrastructureInfo,
       createdAt: new Date().toISOString()
@@ -455,24 +499,7 @@ router.put('/hyperpod/instances/:name/scale', async (req, res) => {
       return res.status(400).json({ error: 'No active cluster found' });
     }
 
-    // 读取集群配置文件
-    const configDir = clusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
-
-    if (!fs.existsSync(initEnvsPath)) {
-      return res.status(400).json({ error: 'Cluster configuration file not found' });
-    }
-
-    // 解析 init_envs 文件
-    const getEnvVar = async (varName) => {
-      const cmd = `source ${initEnvsPath} && echo $${varName}`;
-      const result = await execAsync(cmd, { shell: '/bin/bash' });
-      return result.stdout.trim();
-    };
-
-    const region = await getEnvVar('AWS_REGION') || 'us-west-2';
-
-    // 从 cluster_info.json 中获取实际的 HyperPod 集群名称
+    // 从 cluster_info.json 获取集群信息
     const clusterInfo = await clusterManager.getClusterInfo(activeClusterName);
     if (!clusterInfo) {
       return res.status(400).json({ error: 'Cluster info not found' });
@@ -482,6 +509,7 @@ router.put('/hyperpod/instances/:name/scale', async (req, res) => {
       return res.status(400).json({ error: 'No HyperPod cluster found for this EKS cluster' });
     }
 
+    const region = clusterInfo.region;
     const hpClusterName = clusterInfo.hyperPodCluster.ClusterName;
 
     // 动态获取当前实例组的完整配置
@@ -553,33 +581,18 @@ router.post('/hyperpod/add-instance-group', async (req, res) => {
       return res.status(400).json({ error: 'No active cluster found' });
     }
 
-    // 读取集群配置文件
-    const configDir = clusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
+    // 从 cluster_info.json 获取集群信息
+    const clusterInfo = await clusterManager.getClusterInfo(activeClusterName);
 
-    if (!fs.existsSync(initEnvsPath)) {
-      return res.status(400).json({ error: 'Cluster configuration not found' });
-    }
-
-    // 解析环境变量
-    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-    const awsRegionMatch = envContent.match(/export AWS_REGION=(.+)/);
-    const region = awsRegionMatch ? awsRegionMatch[1] : 'us-west-2';
-
-    // 从 metadata 中获取 HyperPod 集群信息
-    const metadataDir = clusterManager.getClusterMetadataDir(activeClusterName);
-    const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
-
-    if (!fs.existsSync(clusterInfoPath)) {
+    if (!clusterInfo) {
       return res.status(400).json({ error: 'Cluster metadata not found' });
     }
-
-    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
 
     if (!clusterInfo.hyperPodCluster) {
       return res.status(400).json({ error: 'No HyperPod cluster found' });
     }
 
+    const region = clusterInfo.region;
     const hyperPodCluster = clusterInfo.hyperPodCluster;
 
     // 获取现有集群的详细信息
@@ -679,7 +692,7 @@ router.post('/hyperpod/add-instance-group', async (req, res) => {
     console.log('Generated instance group config:', JSON.stringify(instanceGroupConfig, null, 2));
 
     // 创建临时配置文件
-    const tempConfigPath = path.join(configDir, 'temp-instance-group-config.json');
+    const tempConfigPath = path.join('/tmp', `instance-group-config-${Date.now()}.json`);
     fs.writeFileSync(tempConfigPath, JSON.stringify(instanceGroupConfig, null, 2));
 
     // 调用 AWS CLI 添加实例组
@@ -720,33 +733,18 @@ router.post('/hyperpod/delete-instance-group', async (req, res) => {
       return res.status(400).json({ error: 'Instance group name is required' });
     }
 
-    // 读取集群配置文件
-    const configDir = clusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
+    // 从 cluster_info.json 获取集群信息
+    const clusterInfo = await clusterManager.getClusterInfo(activeClusterName);
 
-    if (!fs.existsSync(initEnvsPath)) {
-      return res.status(400).json({ error: 'Cluster configuration not found' });
-    }
-
-    // 解析环境变量
-    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-    const awsRegionMatch = envContent.match(/export AWS_REGION=(.+)/);
-    const region = awsRegionMatch ? awsRegionMatch[1] : 'us-west-2';
-
-    // 从 metadata 中获取 HyperPod 集群信息
-    const metadataDir = clusterManager.getClusterMetadataDir(activeClusterName);
-    const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
-
-    if (!fs.existsSync(clusterInfoPath)) {
+    if (!clusterInfo) {
       return res.status(400).json({ error: 'Cluster metadata not found' });
     }
-
-    const clusterInfo = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
 
     if (!clusterInfo.hyperPodCluster) {
       return res.status(400).json({ error: 'No HyperPod cluster found' });
     }
 
+    const region = clusterInfo.region;
     const hyperPodCluster = clusterInfo.hyperPodCluster;
 
     console.log(`Deleting instance group "${instanceGroupName}" from cluster "${hyperPodCluster.ClusterName}"`);
@@ -782,20 +780,17 @@ router.post('/hyperpod/update-software', async (req, res) => {
       return res.status(400).json({ error: 'No active cluster found' });
     }
 
-    // 读取集群配置
-    const configDir = clusterManager.getClusterConfigDir(activeClusterName);
-    const initEnvsPath = path.join(configDir, 'init_envs');
+    // 从 cluster_info.json 获取集群信息
+    const clusterInfo = await clusterManager.getClusterInfo(activeClusterName);
 
-    if (!fs.existsSync(initEnvsPath)) {
-      return res.status(400).json({ error: 'Cluster configuration file not found' });
+    if (!clusterInfo) {
+      return res.status(400).json({ error: 'Cluster configuration not found' });
     }
 
-    const envContent = fs.readFileSync(initEnvsPath, 'utf8');
-    const awsRegionMatch = envContent.match(/export AWS_REGION=(.+)/);
-    const region = awsRegionMatch ? awsRegionMatch[1] : 'us-west-2';
+    const region = clusterInfo.region;
 
     // 使用 AWS CLI 更新软件
-    const updateCmd = `aws sagemaker update-cluster-software --cluster-identifier "${clusterArn}" --region ${region}`;
+    const updateCmd = `aws sagemaker update-cluster-software --cluster-name "${clusterArn}" --region ${region}`;
     const result = await execAsync(updateCmd);
 
     console.log('Update software result:', result.stdout);
@@ -901,81 +896,16 @@ router.get('/hyperpod-creation-status/:clusterTag', async (req, res) => {
 });
 
 /**
- * 获取正在创建的 HyperPod 集群列表
+ * 获取正在创建的 HyperPod 集群列表（只读查询）
  * GET /api/cluster/creating-hyperpod-clusters
+ * 
+ * 注意：此 API 只返回当前状态，不触发任何写入/注册流程
+ * 状态变更由定时检查链路 (index.js) 统一处理
  */
 router.get('/creating-hyperpod-clusters', async (req, res) => {
   try {
     const creatingClusters = getCreatingHyperPodClusters();
-
-    // 检查所有创建中集群的状态
-    for (const [clusterTag, clusterInfo] of Object.entries(creatingClusters)) {
-      if (clusterInfo.stackName && clusterInfo.region) {
-        try {
-          const checkCmd = `aws cloudformation describe-stacks --stack-name ${clusterInfo.stackName} --region ${clusterInfo.region} --query 'Stacks[0].StackStatus' --output text`;
-          const stackStatus = execSync(checkCmd, { encoding: 'utf8', timeout: 10000 }).trim();
-
-          if (stackStatus === 'CREATE_COMPLETE') {
-            clusterInfo.cfStatus = 'CREATE_COMPLETE';
-          } else if (stackStatus === 'DELETE_COMPLETE') {
-            console.log(`HyperPod deletion completed: ${clusterTag}`);
-
-            // 删除 metadata 文件
-            const hyperPodConfigPath = path.join(MANAGED_CLUSTERS_DIR, clusterTag, 'metadata/hyperpod-config.json');
-            if (fs.existsSync(hyperPodConfigPath)) {
-              fs.unlinkSync(hyperPodConfigPath);
-            }
-
-            // 清理 cluster_info.json 中的 hyperPodCluster 字段
-            const metadataDir = clusterManager.getClusterMetadataDir(clusterTag);
-            const clusterInfoPath = path.join(metadataDir, 'cluster_info.json');
-            if (fs.existsSync(clusterInfoPath)) {
-              try {
-                const clusterInfoData = JSON.parse(fs.readFileSync(clusterInfoPath, 'utf8'));
-                if (clusterInfoData.hyperPodCluster) {
-                  delete clusterInfoData.hyperPodCluster;
-                  clusterInfoData.lastModified = new Date().toISOString();
-                  fs.writeFileSync(clusterInfoPath, JSON.stringify(clusterInfoData, null, 2));
-                  console.log(`Removed hyperPodCluster field from cluster_info.json for ${clusterTag}`);
-                }
-              } catch (error) {
-                console.error(`Error cleaning hyperPodCluster metadata for ${clusterTag}:`, error);
-              }
-            }
-
-            updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
-
-            broadcast({
-              type: 'hyperpod_deletion_completed',
-              clusterTag,
-              message: 'HyperPod cluster deleted successfully'
-            });
-          } else if (stackStatus.includes('FAILED') || stackStatus.includes('ROLLBACK')) {
-            console.log(`Auto-cleaning failed HyperPod operation: ${clusterTag}, status: ${stackStatus}`);
-            updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
-
-            if (clusterInfo.status === 'DELETING') {
-              broadcast({
-                type: 'hyperpod_deletion_failed',
-                clusterTag,
-                message: `HyperPod deletion failed: ${stackStatus}`
-              });
-            }
-          } else {
-            clusterInfo.cfStatus = stackStatus;
-          }
-        } catch (error) {
-          if (error.message.includes('does not exist')) {
-            console.log(`Stack does not exist, cleaning up: ${clusterTag}`);
-            updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
-          } else {
-            console.error(`Error checking HyperPod status for ${clusterTag}:`, error.message);
-          }
-        }
-      }
-    }
-
-    res.json({ success: true, data: getCreatingHyperPodClusters() });
+    res.json({ success: true, data: creatingClusters });
   } catch (error) {
     console.error('Error getting creating HyperPod clusters:', error);
     res.status(500).json({ success: false, error: error.message });

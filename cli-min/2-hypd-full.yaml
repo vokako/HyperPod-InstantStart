@@ -1,48 +1,65 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: HyperPod Stack using existing resources and original substacks
+Description: |
+  Full HyperPod Stack - includes S3, LifeCycle Scripts, SageMaker Role, and HyperPod Cluster.
+  For both created and imported EKS clusters.
+  - Creates S3 bucket, lifecycle scripts, and SageMaker IAM role
+  - Optionally creates private subnet if ExistingPrivateSubnetId not provided
 
 Parameters:
-  # Existing resources
+  # Existing resources from EKS
   ExistingVpcId:
     Type: String
-    Default: vpc-0123456789
 
   ExistingSecurityGroupId:
     Type: String
-    Default: sg-0123456789
 
   ExistingEKSClusterName:
     Type: String
-    Default: eks-cluster
-
-  ExistingSageMakerRoleName:
-    Type: String
-    Default: SageMaker-Exec-Role-us-west-2
-
-  ExistingS3BucketName:
-    Type: String
-    Default: bucket-0123456789-us-west-2
 
   ExistingNatGatewayId:
     Type: String
-    Default: nat-0123456789
+    Description: Required only when creating new subnet
 
-  # Configuration
+  ExistingPrivateSubnetId:
+    Type: String
+    Default: ""
+    Description: Optional - existing private subnet ID. If provided, skip subnet creation.
+
+  # Optional - use existing S3 and Role
+  ExistingSageMakerRoleName:
+    Type: String
+    Default: ""
+    Description: Optional - existing SageMaker role name. If provided, skip role creation.
+
+  ExistingS3BucketName:
+    Type: String
+    Default: ""
+    Description: Optional - existing S3 bucket name. If provided, skip bucket creation.
+
+  # Resource naming
   ResourceNamePrefix:
     Type: String
-    Default: hyperpod-stack
+    Default: hyperpod
+    Description: Prefix for S3 bucket and IAM role naming
 
+  SubnetNamePrefix:
+    Type: String
+    Default: hp-compute
+    Description: Prefix for subnet naming
+
+  # Subnet configuration
   AvailabilityZoneId:
     Type: String
-    Default: usw2-az2
+    Description: Required when creating new subnet
 
   PrivateSubnet1CIDR:
     Type: String
     Default: 10.91.20.0/24
+    Description: Required when creating new subnet
 
+  # HyperPod configuration
   HyperPodClusterName:
     Type: String
-    Default: hyperpod-cluster
 
   NodeRecovery:
     Type: String
@@ -83,12 +100,12 @@ Parameters:
 
   EnableInstanceStressCheck:
     Type: String
-    Default: 'true'
+    Default: 'false'
     AllowedValues: ['true', 'false']
 
   EnableInstanceConnectivityCheck:
     Type: String
-    Default: 'true'
+    Default: 'false'
     AllowedValues: ['true', 'false']
 
   AcceleratedLifeCycleConfigOnCreate:
@@ -187,6 +204,11 @@ Parameters:
     Type: String
     Default: ""
 
+Conditions:
+  CreatePrivateSubnet: !Equals [!Ref ExistingPrivateSubnetId, ""]
+  CreateS3Bucket: !Equals [!Ref ExistingS3BucketName, ""]
+  CreateSageMakerRole: !Equals [!Ref ExistingSageMakerRoleName, ""]
+
 Mappings:
   AssetS3Buckets: 
     eu-north-1:
@@ -225,31 +247,98 @@ Mappings:
       BucketName: ws-assets-prod-iad-r-yul-5c2977cd61bca1f3
 
 Resources:
-  PrivateSubnetStack:
+  # ============ S3 Bucket for LifeCycle Scripts (conditional) ============
+  S3BucketStack:
     Type: AWS::CloudFormation::Stack
-    Properties:
-      TemplateURL: 
-        Fn::Sub: 
-        - "https://${BucketName}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/private-subnet-stack.yaml"
-        - BucketName: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
-      Parameters:
-        ResourceNamePrefix: !Ref ResourceNamePrefix
-        AvailabilityZoneId: !Ref AvailabilityZoneId
-        PrivateSubnet1CIDR: !Ref PrivateSubnet1CIDR
-        VpcId: !Ref ExistingVpcId
-        NatGatewayId: !Ref ExistingNatGatewayId
-
-  S3EndpointStack:
-    Type: AWS::CloudFormation::Stack
+    Condition: CreateS3Bucket
     Properties:
       TemplateURL:
         Fn::Sub:
-        - "https://${BucketName}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/s3-endpoint-stack.yaml"
+        - "https://${BucketName}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/s3-bucket-stack.yaml"
         - BucketName: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
       Parameters:
-        VpcId: !Ref ExistingVpcId
-        PrivateRouteTableId: !GetAtt PrivateSubnetStack.Outputs.PrivateRouteTableId
+        ResourceNamePrefix: !Ref ResourceNamePrefix
 
+  # ============ LifeCycle Scripts (conditional) ============
+  LifeCycleScriptStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateS3Bucket
+    DependsOn: S3BucketStack
+    Properties:
+      TemplateURL: 
+        Fn::Sub: 
+        - "https://${BucketName}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/lifecycle-script-stack.yaml"
+        - BucketName: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        S3BucketName: !GetAtt S3BucketStack.Outputs.S3BucketName
+
+  # ============ SageMaker IAM Role (conditional) ============
+  SageMakerIAMRoleStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateSageMakerRole
+    Properties:
+      TemplateURL: 
+        Fn::Sub:
+        - "https://${BucketName}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/sagemaker-iam-role-stack.yaml"
+        - BucketName: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
+      Parameters:
+        ResourceNamePrefix: !Ref ResourceNamePrefix
+        S3BucketName: !If
+          - CreateS3Bucket
+          - !GetAtt S3BucketStack.Outputs.S3BucketName
+          - !Ref ExistingS3BucketName
+
+  # ============ Private Subnet (conditional) ============
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref ExistingVpcId
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZoneId: !Ref AvailabilityZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub "${SubnetNamePrefix}-${AvailabilityZoneId}"
+        - Key: karpenter.sh/discovery
+          Value: !Ref ExistingEKSClusterName
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref ExistingVpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${SubnetNamePrefix}-${AvailabilityZoneId}-rt"
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateSubnet
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Condition: CreatePrivateSubnet
+    DependsOn: PrivateSubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ExistingNatGatewayId
+
+  S3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreatePrivateSubnet
+    Properties:
+      VpcId: !Ref ExistingVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # ============ HyperPod Cluster ============
   HyperPodClusterStack:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -292,13 +381,45 @@ Resources:
         RestrictedThreadsPerCore: !Ref RestrictedThreadsPerCore
         RestrictedTrainingPlanArn: !Ref RestrictedTrainingPlanArn
         HelmChartStatus: HelmChartNotRequired
-        SageMakerIAMRoleName: !Ref ExistingSageMakerRoleName
-        PrivateSubnetId: !GetAtt PrivateSubnetStack.Outputs.PrivateSubnetId
+        SageMakerIAMRoleName: !If
+          - CreateSageMakerRole
+          - !Select [1, !Split ["/", !GetAtt SageMakerIAMRoleStack.Outputs.SageMakerIAMRoleArn]]
+          - !Ref ExistingSageMakerRoleName
+        PrivateSubnetId: !If
+          - CreatePrivateSubnet
+          - !Ref PrivateSubnet
+          - !Ref ExistingPrivateSubnetId
         SecurityGroupId: !Ref ExistingSecurityGroupId
         EKSClusterName: !Ref ExistingEKSClusterName
-        S3BucketName: !Ref ExistingS3BucketName
+        S3BucketName: !If
+          - CreateS3Bucket
+          - !GetAtt S3BucketStack.Outputs.S3BucketName
+          - !Ref ExistingS3BucketName
 
 Outputs:
+  # S3 and Role outputs
+  S3BucketName:
+    Value: !If
+      - CreateS3Bucket
+      - !GetAtt S3BucketStack.Outputs.S3BucketName
+      - !Ref ExistingS3BucketName
+    Description: S3 bucket for HyperPod lifecycle scripts
+
+  SageMakerIAMRoleArn:
+    Value: !If
+      - CreateSageMakerRole
+      - !GetAtt SageMakerIAMRoleStack.Outputs.SageMakerIAMRoleArn
+      - !Sub "arn:aws:iam::${AWS::AccountId}:role/${ExistingSageMakerRoleName}"
+    Description: SageMaker execution role ARN
+
+  SageMakerIAMRoleName:
+    Value: !If
+      - CreateSageMakerRole
+      - !Select [1, !Split ["/", !GetAtt SageMakerIAMRoleStack.Outputs.SageMakerIAMRoleArn]]
+      - !Ref ExistingSageMakerRoleName
+    Description: SageMaker execution role name
+
+  # HyperPod outputs
   HyperPodClusterName:
     Value: !GetAtt HyperPodClusterStack.Outputs.HyperPodClusterName
     Description: HyperPod cluster name
@@ -307,18 +428,23 @@ Outputs:
     Value: !GetAtt HyperPodClusterStack.Outputs.HyperPodClusterArn
     Description: HyperPod cluster ARN
 
+  # Network outputs
   PrivateSubnetId:
-    Value: !GetAtt PrivateSubnetStack.Outputs.PrivateSubnetId
-    Description: Private subnet ID created for HyperPod
+    Value: !If
+      - CreatePrivateSubnet
+      - !Ref PrivateSubnet
+      - !Ref ExistingPrivateSubnetId
+    Description: Private subnet ID used by HyperPod
 
   PrivateRouteTableId:
-    Value: !GetAtt PrivateSubnetStack.Outputs.PrivateRouteTableId
+    Condition: CreatePrivateSubnet
+    Value: !Ref PrivateRouteTable
     Description: Private route table ID
 
   VpcId:
     Value: !Ref ExistingVpcId
-    Description: VPC ID used by HyperPod cluster
+    Description: VPC ID
 
   SecurityGroupId:
     Value: !Ref ExistingSecurityGroupId
-    Description: Security group ID used by HyperPod cluster
+    Description: Security group ID

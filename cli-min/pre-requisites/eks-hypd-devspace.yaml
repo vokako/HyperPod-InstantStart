@@ -56,6 +56,11 @@ Parameters:
       - "true"
       - "false"
     Description: Use minimal IAM policy instead of AdministratorAccess (true for fine-grained permissions)
+
+  ExistingIAMRoleName:
+    Type: String
+    Default: ""
+    Description: Name of existing IAM role to use (leave empty to create a new role)
     
   LatestUbuntu2204AMI:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -72,8 +77,9 @@ Conditions:
     - !Condition HasSecurityGroupId
   UseDefaultVpc: !Not [!Condition UseCustomVpc]
   CreateNewBucket: !Equals [!Ref ExistingS3BucketName, ""]
+  CreateNewRole: !Equals [!Ref ExistingIAMRoleName, ""]
+  UseExistingRole: !Not [!Equals [!Ref ExistingIAMRoleName, ""]]
   UseMinimalPolicy: !Equals [!Ref UseMinimalIAMPolicy, "true"]
-  UseAdminPolicy: !Equals [!Ref UseMinimalIAMPolicy, "false"]
 
 Resources:
   # S3 Bucket for HYPD resources (only created if ExistingS3BucketName is empty)
@@ -97,9 +103,10 @@ Resources:
         - Key: Name
           Value: !Sub '${ResourceTag}-bucket'
 
-  # IAM Role
+  # IAM Role (only created if ExistingIAMRoleName is empty)
   EKSPlusHYPDAdminRole:
     Type: AWS::IAM::Role
+    Condition: CreateNewRole
     Properties:
       RoleName: !Sub '${ResourceTag}-admin-role'
       AssumeRolePolicyDocument:
@@ -130,9 +137,9 @@ Resources:
                 AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
               Action: sts:AssumeRole
       ManagedPolicyArns: !If
-        - UseAdminPolicy
-        - - arn:aws:iam::aws:policy/AdministratorAccess
+        - UseMinimalPolicy
         - !Ref AWS::NoValue
+        - - arn:aws:iam::aws:policy/AdministratorAccess
       Policies: !If
         - UseMinimalPolicy
         - - PolicyName: HyperPodMinimalPolicy
@@ -268,10 +275,20 @@ Resources:
   # Instance Profile
   HYPDInstanceProfile:
     Type: AWS::IAM::InstanceProfile
+    Condition: CreateNewRole
     Properties:
       InstanceProfileName: !Sub 'instance-profile-${EKSPlusHYPDAdminRole}'
       Roles:
         - !Ref EKSPlusHYPDAdminRole
+
+  # Instance Profile for existing IAM Role
+  ExistingRoleInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: UseExistingRole
+    Properties:
+      InstanceProfileName: !Sub 'instance-profile-${ExistingIAMRoleName}'
+      Roles:
+        - !Ref ExistingIAMRoleName
 
   # Security Group (only for default VPC)
   SecurityGroup:
@@ -293,13 +310,18 @@ Resources:
   # EC2 Instance
   EC2Instance:
     Type: AWS::EC2::Instance
-    DependsOn: 
+    DependsOn: !If
+      - CreateNewRole
       - HYPDInstanceProfile
+      - ExistingRoleInstanceProfile
     Properties:
       ImageId: !Ref LatestUbuntu2204AMI
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPairName
-      IamInstanceProfile: !Ref HYPDInstanceProfile
+      IamInstanceProfile: !If
+        - CreateNewRole
+        - !Ref HYPDInstanceProfile
+        - !Ref ExistingRoleInstanceProfile
       SecurityGroupIds: !If [UseCustomVpc, !Ref "AWS::NoValue", [!Ref SecurityGroup]]
       NetworkInterfaces: !If 
         - UseCustomVpc
@@ -380,9 +402,9 @@ Resources:
             S3_BUCKET_NAME="${S3BucketName}"
             
             # Add to fstab for persistent mounting
-            echo "$S3_BUCKET_NAME /home/ubuntu/workspace/s3 fuse.s3fs _netdev,user,iam_role=${EKSPlusHYPDAdminRole},allow_other,uid=1000,gid=1000 0 0" >> /etc/fstab
+            echo "$S3_BUCKET_NAME /home/ubuntu/workspace/s3 fuse.s3fs _netdev,user,iam_role=${IAMRoleName},allow_other,uid=1000,gid=1000 0 0" >> /etc/fstab
 
-            sudo -u ubuntu s3fs $S3_BUCKET_NAME /home/ubuntu/workspace/s3 -o iam_role=${EKSPlusHYPDAdminRole},allow_other,uid=1000,gid=1000
+            sudo -u ubuntu s3fs $S3_BUCKET_NAME /home/ubuntu/workspace/s3 -o iam_role=${IAMRoleName},allow_other,uid=1000,gid=1000
 
             # Write CURRENT_BUCKET_INFO
             sudo -u ubuntu bash -c 'echo "{\"bucketName\":\"'$S3_BUCKET_NAME'\",\"awsRegion\":\"${AWS::Region}\",\"createTime\":\"$(date -Iseconds)\"}" > /home/ubuntu/workspace/s3/CURRENT_BUCKET_INFO'
@@ -391,6 +413,7 @@ Resources:
             
             /usr/local/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
           - S3BucketName: !If [CreateNewBucket, !Ref HYPDUserBucket, !Ref ExistingS3BucketName]
+            IAMRoleName: !If [CreateNewRole, !Ref EKSPlusHYPDAdminRole, !Ref ExistingIAMRoleName]
       Tags:
         - Key: Name
           Value: !Sub '${ResourceTag}-instance'
@@ -416,16 +439,25 @@ Outputs:
       - !Sub 'arn:aws:s3:::${ExistingS3BucketName}'
     Description: ARN of the S3 bucket
   IAMRoleName:
-    Value: !Ref EKSPlusHYPDAdminRole
-    Description: Name of the IAM role
+    Value: !If [CreateNewRole, !Ref EKSPlusHYPDAdminRole, !Ref ExistingIAMRoleName]
+    Description: Name of the IAM role (created or existing)
   IAMRoleArn:
-    Value: !GetAtt EKSPlusHYPDAdminRole.Arn
+    Value: !If
+      - CreateNewRole
+      - !GetAtt EKSPlusHYPDAdminRole.Arn
+      - !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ExistingIAMRoleName}'
     Description: ARN of the IAM role
   InstanceProfileName:
-    Value: !Ref HYPDInstanceProfile
+    Value: !If
+      - CreateNewRole
+      - !Ref HYPDInstanceProfile
+      - !Ref ExistingRoleInstanceProfile
     Description: Name of the Instance Profile
   InstanceProfileArn:
-    Value: !GetAtt HYPDInstanceProfile.Arn
+    Value: !If
+      - CreateNewRole
+      - !GetAtt HYPDInstanceProfile.Arn
+      - !GetAtt ExistingRoleInstanceProfile.Arn
     Description: ARN of the Instance Profile
   SecurityGroupId:
     Condition: UseDefaultVpc

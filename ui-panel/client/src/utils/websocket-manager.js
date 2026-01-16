@@ -163,7 +163,7 @@ class WebSocketManager {
 
       // HyperPod 创建完成
       case 'hyperpod_creation_completed': {
-        store.dispatch(setHyperPodCreationStatus('completed'));
+        store.dispatch(setHyperPodCreationStatus(null));
         store.dispatch(fetchNodeGroups());
         break;
       }

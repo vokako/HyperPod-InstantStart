@@ -6,7 +6,6 @@
 // 集群相关选择器
 export const selectActiveCluster = state => state.clusters.activeCluster;
 export const selectClustersList = state => state.clusters.list;
-export const selectClusterDetails = state => state.clusters.clusterDetails;
 export const selectDependenciesStatus = state => state.clusters.dependencies;
 export const selectClusterLoading = state => state.clusters.loading;
 export const selectClusterError = state => state.clusters.error;
@@ -14,10 +13,13 @@ export const selectCreatingClusters = state => state.clusters.creatingClusters;
 
 // 获取有效的依赖配置状态（考虑导入集群的特殊情况）
 export const selectEffectiveDependenciesStatus = state => {
-  const { clusterDetails, dependencies } = state.clusters;
-
+  const { list, activeCluster, dependencies } = state.clusters;
+  
+  // 从集群列表中找到当前集群
+  const currentCluster = list.find(c => c.clusterTag === activeCluster);
+  
   // 如果是导入的集群且有HyperPod，则视为已配置
-  if (clusterDetails?.type === 'imported' && clusterDetails?.hyperPodCluster) {
+  if (currentCluster?.type === 'imported' && currentCluster?.hyperPodCluster) {
     return true;
   }
 

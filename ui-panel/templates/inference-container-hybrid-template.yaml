@@ -2,27 +2,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: SERVENGINE-MODEL_TAG-inference
+  name: PLACEHOLDER_NAME
   labels:
-    app: SERVENGINE-MODEL_TAG-inference
-    model-type: "SERVENGINE"
-    deployment-tag: "MODEL_TAG"
+    app: PLACEHOLDER_APP
+    model-type: "PLACEHOLDER_MODEL_TYPE"
+    deployment-tag: "PLACEHOLDER_TAG"
 spec:
-  replicas: REPLICAS_COUNT
+  replicas: 1
   selector:
     matchLabels:
-      app: SERVENGINE-MODEL_TAG-inference
+      app: PLACEHOLDER_APP
   template:
     metadata:
       labels:
-        app: SERVENGINE-MODEL_TAG-inference
-        model-type: "SERVENGINE"HAMI_LABEL
+        app: PLACEHOLDER_APP
+        model-type: "PLACEHOLDER_MODEL_TYPE"
     spec:
       affinity:
         nodeAffinity:
-          # 优先级调度
           preferredDuringSchedulingIgnoredDuringExecution:
-
           - weight: 100
             preference:
               matchExpressions:
@@ -34,7 +32,6 @@ spec:
               matchExpressions:
               - key: alpha.eksctl.io/nodegroup-name
                 operator: Exists
-
           - weight: 80
             preference:
               matchExpressions:
@@ -42,15 +39,20 @@ spec:
                 operator: Exists
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-HYBRID_NODE_SELECTOR_TERMS
-
+            - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values: ["ml.g6.12xlarge"]
       containers:
         - name: SERVENGINE
           image: DOCKER_IMAGE
-          RESOURCES_SECTION
-          COMMAND_YAML
+          resources:
+            requests:
+              nvidia.com/gpu: 1
+            limits:
+              nvidia.com/gpu: 1
           ports:
-            - containerPort: PORT_NUMBER
+            - containerPort: 8000
               name: http
           volumeMounts:
             - name: persistent-storage-s3
@@ -60,7 +62,7 @@ HYBRID_NODE_SELECTOR_TERMS
               mountPath: /root/.cache
             - name: shm
               mountPath: /dev/shm
-          env:HF_TOKEN_ENV
+          env:
             - name: HF_HOME
               value: "/root/.cache/huggingface"
           securityContext:
