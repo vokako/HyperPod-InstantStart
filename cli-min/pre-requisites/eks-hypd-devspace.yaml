@@ -113,11 +113,12 @@ Resources:
         Version: '2012-10-17'
         Statement: !If
           - UseMinimalPolicy
-          # Minimal: only EC2 can assume
+          # Minimal: EC2 + Lambda can assume
           - - Effect: Allow
               Principal:
                 Service:
                   - ec2.amazonaws.com
+                  - lambda.amazonaws.com
               Action:
                 - sts:AssumeRole
           # Admin: multiple services + root account can assume
@@ -130,6 +131,7 @@ Resources:
                   - bedrock.amazonaws.com
                   - cloudformation.amazonaws.com
                   - sagemaker.amazonaws.com
+                  - lambda.amazonaws.com
               Action:
                 - sts:AssumeRole
             - Effect: Allow
@@ -257,7 +259,7 @@ Resources:
                   Resource:
                     - arn:aws:lambda:*:*:function:*hyperpod*
                     - arn:aws:lambda:*:*:function:*sagemaker*
-                    - arn:aws:lambda:*:*:function:*LifeCycleScript*
+                    - arn:aws:lambda:*:*:function:*[Ll]ife[Cc]ycle[Ss]cript*
                     - arn:aws:lambda:*:*:layer:*
                 - Sid: CloudWatchLogs
                   Effect: Allow

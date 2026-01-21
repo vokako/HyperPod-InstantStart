@@ -1,9 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  Full HyperPod Stack - includes S3, LifeCycle Scripts, SageMaker Role, and HyperPod Cluster.
   For both created and imported EKS clusters.
-  - Creates S3 bucket, lifecycle scripts, and SageMaker IAM role
-  - Optionally creates private subnet if ExistingPrivateSubnetId not provided
 
 Parameters:
   # Existing resources from EKS

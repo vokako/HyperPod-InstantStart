@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: EKS Control Plane Only (S3/LifeCycle/Role moved to 2-hypd-full.yaml)
+Description: EKS Control Plane for HyperPod Compute
 
 Metadata:
   AWS::CloudFormation::Interface:
