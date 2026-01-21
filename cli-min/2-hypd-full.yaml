@@ -260,18 +260,86 @@ Resources:
         ResourceNamePrefix: !Ref ResourceNamePrefix
 
   # ============ LifeCycle Scripts (conditional) ============
-  LifeCycleScriptStack:
-    Type: AWS::CloudFormation::Stack
+  # Inline implementation to fix AWS template bug (missing on_create_main.sh)
+  LifeCycleScriptRole:
+    Type: AWS::IAM::Role
+    Condition: CreateS3Bucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub 
+                  - 'arn:aws:s3:::${BucketName}/*'
+                  - BucketName: !GetAtt S3BucketStack.Outputs.S3BucketName
+
+  LifeCycleScriptFunction:
+    Type: AWS::Lambda::Function
+    Condition: CreateS3Bucket
+    Properties:
+      FunctionName: !Sub '${ResourceNamePrefix}-lifecycle-script-loader'
+      Environment:
+        Variables:
+          BUCKET_NAME: !GetAtt S3BucketStack.Outputs.S3BucketName
+          GITHUB_BASE_URL: 'https://raw.githubusercontent.com/aws-samples/awsome-distributed-training/refs/heads/main/1.architectures/7.sagemaker-hyperpod-eks/LifecycleScripts/base-config'
+      Handler: index.lambda_handler
+      Role: !GetAtt LifeCycleScriptRole.Arn
+      Runtime: python3.12
+      Timeout: 600
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          from urllib import request
+
+          def lambda_handler(event, context):
+            try:
+              s3 = boto3.client('s3')
+              bucket = os.environ['BUCKET_NAME']
+              base_url = os.environ['GITHUB_BASE_URL']
+              scripts = ['on_create.sh', 'on_create_main.sh']
+
+              if event['RequestType'] in ['Create', 'Update']:
+                for script in scripts:
+                  url = f"{base_url}/{script}"
+                  with request.urlopen(url) as response:
+                    content = response.read().decode('utf-8')
+                  s3.put_object(Bucket=bucket, Key=script, Body=content, ContentType='text/x-sh')
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Message': 'Files uploaded'})
+
+              elif event['RequestType'] == 'Delete':
+                for script in scripts:
+                  try:
+                    s3.delete_object(Bucket=bucket, Key=script)
+                  except:
+                    pass
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Message': 'Files deleted'})
+
+            except Exception as e:
+              print(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  LifeCycleScriptResource:
+    Type: AWS::CloudFormation::CustomResource
     Condition: CreateS3Bucket
     DependsOn: S3BucketStack
     Properties:
-      TemplateURL: 
-        Fn::Sub: 
-        - "https://${BucketName}.s3.${AWS::Region}.amazonaws.com/2433d39e-ccfe-4c00-9d3d-9917b729258e/lifecycle-script-stack.yaml"
-        - BucketName: !FindInMap [AssetS3Buckets, !Ref 'AWS::Region', BucketName]
-      Parameters:
-        ResourceNamePrefix: !Ref ResourceNamePrefix
-        S3BucketName: !GetAtt S3BucketStack.Outputs.S3BucketName
+      ServiceToken: !GetAtt LifeCycleScriptFunction.Arn
 
   # ============ SageMaker IAM Role (conditional) ============
   SageMakerIAMRoleStack:
