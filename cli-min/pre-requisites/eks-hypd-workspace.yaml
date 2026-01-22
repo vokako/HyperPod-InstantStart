@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Simplified CloudFormation template for EKS HYPD setup'
+Description: 'HyperPod InstantStart workspace (for EKS orchestrated HyperPod)'
 
 Parameters:
   InstanceName:
@@ -10,7 +10,7 @@ Parameters:
   InstanceType:
     Type: String
     Default: m5.xlarge
-    Description: EC2 instance type (e.g., c5.xlarge, m5.xlarge, t3.large)
+    Description: EC2 instance type (e.g., c5.xlarge, m5.xlarge)
     
   KeyPairName:
     Type: String
