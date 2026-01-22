@@ -1083,7 +1083,7 @@ const NodeGroupManagerRedux = ({ activeCluster, refreshTrigger, cluster }) => {
       // 立即获取完整的创建状态，避免显示空字段
       await dispatch(checkHyperPodCreationStatus());
       
-      message.success('HyperPod creation initiated successfully');
+      message.info('HyperPod creation initiated successfully');
     } catch (error) {
       message.error(`Error creating HyperPod cluster: ${error}`);
     }

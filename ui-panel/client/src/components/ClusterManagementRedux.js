@@ -19,7 +19,8 @@ import {
   Alert,
   Divider,
   InputNumber,
-  Tooltip
+  Tooltip,
+  Collapse
 } from 'antd';
 import {
   CloudServerOutlined,
@@ -686,15 +687,37 @@ const ClusterManagementRedux = () => {
             <Input placeholder="us-west-2" />
           </Form.Item>
 
-          <Form.Item
-            label="HyperPod Cluster Name (Optional)"
-            name="hyperPodClusters"
-            extra="Enter the HyperPod cluster name associated with this EKS cluster"
-          >
-            <Input
-              placeholder="hp-cluster-name"
-            />
-          </Form.Item>
+          <Collapse
+            ghost
+            style={{ marginBottom: 16, marginLeft: -16 }}
+            items={[
+              {
+                key: 'optional',
+                label: 'Optional Configs',
+                style: { paddingLeft: 0 },
+                children: (
+                  <div style={{ paddingLeft: 8 }}>
+                    <Form.Item
+                      label="Compute Security Group"
+                      name="computeSecurityGroup"
+                      extra="Security group ID for compute nodes (e.g., sg-xxxxxxxx). If not provided, will auto-detect from EKS cluster."
+                    >
+                      <Input placeholder="sg-xxxxxxxx" />
+                    </Form.Item>
+
+                    <Form.Item
+                      label="HyperPod Cluster Name"
+                      name="hyperPodClusters"
+                      extra="Enter the HyperPod cluster name associated with this EKS cluster"
+                      style={{ marginBottom: 0 }}
+                    >
+                      <Input placeholder="hp-cluster-name" />
+                    </Form.Item>
+                  </div>
+                )
+              }
+            ]}
+          />
 
           <Divider />
 

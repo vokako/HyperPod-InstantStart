@@ -54,6 +54,23 @@ class NetworkManager {
   // ==================== CIDR Operations ====================
 
   /**
+   * Get VPC CIDR by VPC ID
+   * @param {string} vpcId - VPC ID
+   * @param {string} region - AWS region
+   * @returns {Promise<string|null>} VPC CIDR or null
+   */
+  static async getVpcCidr(vpcId, region) {
+    try {
+      const command = `aws ec2 describe-vpcs --vpc-ids ${vpcId} --region ${region} --query "Vpcs[0].CidrBlock" --output text`;
+      const result = execSync(command, { encoding: 'utf8' }).trim();
+      return result && result !== 'None' ? result : null;
+    } catch (error) {
+      console.error(`Error getting VPC CIDR for ${vpcId}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
    * Generate a unique VPC CIDR that doesn't conflict with existing VPCs
    * @param {string} region - AWS region
    * @param {string} excludeCidr - CIDR to exclude (optional)

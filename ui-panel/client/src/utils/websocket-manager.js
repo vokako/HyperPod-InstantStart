@@ -168,6 +168,13 @@ class WebSocketManager {
         break;
       }
 
+      // HyperPod 创建失败
+      case 'hyperpod_creation_failed': {
+        store.dispatch(setHyperPodCreationStatus(null));
+        store.dispatch(fetchNodeGroups());
+        break;
+      }
+
       // HyperPod 删除完成
       case 'hyperpod_deletion_completed': {
         store.dispatch(setHyperPodDeletionStatus('completed'));

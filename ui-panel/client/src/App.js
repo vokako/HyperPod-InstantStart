@@ -207,7 +207,7 @@ function App() {
 
         case 'hyperpod_creation_started':
             if (data.status === 'success' || data.status === 'info') {
-              message.success(data.message);
+              message.info(data.message);
               // 🚀 触发操作刷新
               operationRefreshManager.triggerOperationRefresh('hyperpod-create', data);
             } else {

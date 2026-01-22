@@ -828,8 +828,38 @@ const hyperPodStatusCheckInterval = setInterval(async () => {
             // 无论成功失败都删除记录（集群已创建成功）
             hyperpodApiManager.updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
           }
+          // 处理 CloudFormation 创建失败
+          else if (stackStatus.includes('FAILED') || stackStatus.includes('ROLLBACK')) {
+            console.log(`[Auto-Check] HyperPod cluster ${clusterTag} creation failed: ${stackStatus}`);
+
+            broadcast({
+              type: 'hyperpod_creation_failed',
+              status: 'error',
+              message: `HyperPod creation failed: ${stackStatus}`,
+              clusterTag: clusterTag,
+              stackName: clusterInfo.stackName
+            });
+
+            // 清理临时状态记录
+            hyperpodApiManager.updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
+          }
         } catch (error) {
-          console.error(`[Auto-Check] Error checking HyperPod ${clusterTag}:`, error);
+          // 处理 stack 不存在的情况（可能被手动删除）
+          if (error.message && error.message.includes('does not exist')) {
+            console.log(`[Auto-Check] HyperPod stack ${clusterInfo.stackName} does not exist, cleaning up record`);
+
+            broadcast({
+              type: 'hyperpod_creation_failed',
+              status: 'error',
+              message: `HyperPod stack no longer exists: ${clusterInfo.stackName}`,
+              clusterTag: clusterTag,
+              stackName: clusterInfo.stackName
+            });
+
+            hyperpodApiManager.updateCreatingHyperPodStatus(clusterTag, 'COMPLETED');
+          } else {
+            console.error(`[Auto-Check] Error checking HyperPod ${clusterTag}:`, error);
+          }
         }
       }
     }

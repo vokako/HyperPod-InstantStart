@@ -263,8 +263,8 @@ class MultiClusterAPIs {
   // 导入现有集群
   async handleImportCluster(req, res) {
     try {
-      const { eksClusterName, awsRegion, hyperPodClusters } = req.body;
-      
+      const { eksClusterName, awsRegion, hyperPodClusters, computeSecurityGroup } = req.body;
+
       if (!eksClusterName || !awsRegion) {
         return res.status(400).json({
           success: false,
@@ -275,6 +275,9 @@ class MultiClusterAPIs {
       console.log(`Importing existing cluster: ${eksClusterName} in ${awsRegion}`);
       if (hyperPodClusters) {
         console.log(`User specified HyperPod clusters: ${hyperPodClusters}`);
+      }
+      if (computeSecurityGroup) {
+        console.log(`User specified Compute Security Group: ${computeSecurityGroup}`);
       }
 
       // 1. 验证集群存在
@@ -329,7 +332,7 @@ class MultiClusterAPIs {
       try {
         const MetadataUtils = require('./utils/metadataUtils');
         await MetadataUtils.saveImportedClusterResources(
-          eksClusterName, eksClusterName, awsRegion, hyperPodClusters, null
+          eksClusterName, eksClusterName, awsRegion, hyperPodClusters, null, computeSecurityGroup
         );
         console.log(`Successfully saved imported cluster resources for: ${eksClusterName}`);
       } catch (error) {
