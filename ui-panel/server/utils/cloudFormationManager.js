@@ -6,6 +6,7 @@
 const { execSync, spawn } = require('child_process');
 const fs = require('fs-extra');
 const path = require('path');
+const { getCurrentRoleArn } = require('./awsHelpers');
 
 // 读取client/user.env配置
 require('dotenv').config({ path: path.join(__dirname, '../../client/user.env') });
@@ -673,6 +674,9 @@ managedNodeGroups:
       if (!fs.existsSync(templatePath)) {
         throw new Error(`HyperPod template not found: ${templatePath}`);
       }
+
+      // 获取当前 EC2 的 Role ARN 用于 Lambda 执行
+      const lambdaRoleArn = await getCurrentRoleArn();
       
       // 构建HyperPod参数（适配 2-hypd-full.yaml）
       const parameters = [
@@ -680,6 +684,7 @@ managedNodeGroups:
         `ParameterKey=ExistingSecurityGroupId,ParameterValue=${stackInfo.SECURITY_GROUP_ID}`,
         `ParameterKey=ExistingEKSClusterName,ParameterValue=${stackInfo.EKS_CLUSTER_NAME}`,
         `ParameterKey=ExistingNatGatewayId,ParameterValue=${stackInfo.NAT_GATEWAY_ID}`,
+        `ParameterKey=LambdaExecutionRoleArn,ParameterValue=${lambdaRoleArn}`,
         // 可选参数：如果有现有资源则传递，否则留空让 CF 创建
         `ParameterKey=ExistingSageMakerRoleName,ParameterValue=${stackInfo.SAGEMAKER_ROLE_NAME || ''}`,
         `ParameterKey=ExistingS3BucketName,ParameterValue=${stackInfo.S3_BUCKET_NAME || ''}`,

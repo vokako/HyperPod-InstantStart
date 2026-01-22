@@ -3,6 +3,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const ClusterManager = require('./clusterManager');
 const MultiClusterLogManager = require('./multiClusterLogManager');
+const { getCurrentIdentity, extractRoleArn } = require('./utils/awsHelpers');
 
 // 多集群管理API
 class MultiClusterAPIs {
@@ -610,8 +611,8 @@ class MultiClusterAPIs {
   async ensureClusterAccess(eksClusterName, awsRegion) {
     try {
       // 1. 获取当前EC2的IAM role
-      const identity = await this.getCurrentIdentity();
-      const roleArn = this.extractRoleArn(identity.Arn);
+      const identity = await getCurrentIdentity();
+      const roleArn = extractRoleArn(identity.Arn);
       
       console.log(`Current EC2 role: ${roleArn}`);
       
@@ -651,30 +652,6 @@ class MultiClusterAPIs {
         warning: 'Cluster import will continue, but you may need to manually add access permissions'
       };
     }
-  }
-
-  // 获取当前身份
-  async getCurrentIdentity() {
-    return new Promise((resolve, reject) => {
-      exec('aws sts get-caller-identity', (error, stdout) => {
-        if (error) {
-          reject(new Error(`Failed to get caller identity: ${error.message}`));
-        } else {
-          resolve(JSON.parse(stdout));
-        }
-      });
-    });
-  }
-
-  // 从assumed role ARN中提取role ARN
-  extractRoleArn(assumedRoleArn) {
-    // 从 arn:aws:sts::account:assumed-role/role-name/session 
-    // 提取为 arn:aws:iam::account:role/role-name
-    const match = assumedRoleArn.match(/arn:aws:sts::(\d+):assumed-role\/([^\/]+)\//);
-    if (match) {
-      return `arn:aws:iam::${match[1]}:role/${match[2]}`;
-    }
-    throw new Error(`Invalid assumed role ARN format: ${assumedRoleArn}`);
   }
 
   // 检查现有访问权限

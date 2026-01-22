@@ -84,5 +84,39 @@ module.exports = {
   getCurrentRegion,
   describeHyperPodCluster,
   getSubnetAZs,
-  getSecurityGroupsFromENIs
+  getSecurityGroupsFromENIs,
+  getCurrentIdentity,
+  extractRoleArn,
+  getCurrentRoleArn
 };
+
+/**
+ * 获取当前调用者身份
+ * @returns {Promise<Object>} { Account, Arn, UserId }
+ */
+async function getCurrentIdentity() {
+  const result = await exec('aws sts get-caller-identity');
+  return JSON.parse(result.stdout);
+}
+
+/**
+ * 从 assumed role ARN 中提取 IAM role ARN
+ * @param {string} assumedRoleArn - arn:aws:sts::account:assumed-role/role-name/session
+ * @returns {string} arn:aws:iam::account:role/role-name
+ */
+function extractRoleArn(assumedRoleArn) {
+  const match = assumedRoleArn.match(/arn:aws:sts::(\d+):assumed-role\/([^\/]+)\//);
+  if (match) {
+    return `arn:aws:iam::${match[1]}:role/${match[2]}`;
+  }
+  throw new Error(`Invalid assumed role ARN format: ${assumedRoleArn}`);
+}
+
+/**
+ * 获取当前 EC2/环境的 IAM Role ARN
+ * @returns {Promise<string>} IAM Role ARN
+ */
+async function getCurrentRoleArn() {
+  const identity = await getCurrentIdentity();
+  return extractRoleArn(identity.Arn);
+}

@@ -164,10 +164,6 @@ const TestPanel = ({ services, onRefresh }) => {
       console.log(`Failed to fetch model ID:`, error.message || error);
       return '';
     }
-    
-    // 如果API调用失败，返回N/A
-    console.log('Returning N/A due to API failure');
-    return 'N/A';
   };
 
   // 手动刷新服务列表

@@ -117,9 +117,19 @@ function executeKubectl(command, timeout = 30000) { // 默认30秒超时
     
     const child = exec(`kubectl ${command}`, { timeout }, (error, stdout, stderr) => {
       if (error) {
-        console.error(`kubectl command failed: kubectl ${command}`);
-        console.error(`Error details:`, error);
-        console.error(`Stderr:`, stderr);
+        // 检查是否是"资源类型不存在"的预期错误（CRD 未安装）
+        const isResourceTypeNotFound = stderr?.includes(`doesn't have a resource type`) || 
+                                        error.message?.includes(`doesn't have a resource type`);
+        
+        if (isResourceTypeNotFound) {
+          // 静默处理：只打印简洁的提示，不打印堆栈
+          console.error(stderr?.trim() || error.message);
+        } else {
+          // 其他错误：打印完整信息用于调试
+          console.error(`kubectl command failed: kubectl ${command}`);
+          console.error(`Error details:`, error);
+          console.error(`Stderr:`, stderr);
+        }
         
         if (error.code === 'ETIMEDOUT') {
           console.error(`kubectl command timed out after ${timeout}ms: ${command}`);
@@ -127,16 +137,17 @@ function executeKubectl(command, timeout = 30000) { // 默认30秒超时
         } else {
           const errorMessage = error.message || stderr || 'Unknown kubectl error';
           
+          // 资源类型不存在：静默 reject，不打印额外日志
+          if (isResourceTypeNotFound) {
+            reject(new Error(errorMessage));
+            return;
+          }
+          
           // 针对特定情况优化错误消息
           let optimizedMessage = errorMessage;
           
-          // 如果是获取hyperpodpytorchjob但资源类型不存在，这是正常情况
-          if (command.includes('get hyperpodpytorchjob') && 
-              errorMessage.includes(`doesn't have a resource type "hyperpodpytorchjob"`)) {
-            optimizedMessage = 'No HyperPod training jobs found (HyperPod operator may not be installed)';
-          }
           // 如果是资源不存在，使用更友好的消息
-          else if (errorMessage.includes('not found') || errorMessage.includes('NotFound')) {
+          if (errorMessage.includes('not found') || errorMessage.includes('NotFound')) {
             optimizedMessage = 'Resource not found - this may be normal if no resources have been created yet';
           }
           // 如果是连接问题
