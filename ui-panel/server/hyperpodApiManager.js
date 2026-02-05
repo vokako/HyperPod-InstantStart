@@ -600,7 +600,7 @@ router.post('/hyperpod/add-instance-group', async (req, res) => {
     const describeResult = await execAsync(describeCmd);
     const clusterData = JSON.parse(describeResult.stdout);
 
-    // 清理现有实例组的运行时字段
+    // 清理现有实例组的运行时字段，保留 OverrideVpcConfig
     const cleanInstanceGroup = (instanceGroup) => {
       const cleaned = {
         InstanceCount: instanceGroup.TargetCount,
@@ -611,6 +611,11 @@ router.post('/hyperpod/add-instance-group', async (req, res) => {
         ThreadsPerCore: instanceGroup.ThreadsPerCore,
         InstanceStorageConfigs: instanceGroup.InstanceStorageConfigs
       };
+
+      // 保留现有的 OverrideVpcConfig（AWS 不支持更新此字段）
+      if (instanceGroup.OverrideVpcConfig) {
+        cleaned.OverrideVpcConfig = instanceGroup.OverrideVpcConfig;
+      }
 
       if (instanceGroup.TrainingPlanArn) {
         cleaned.TrainingPlanArn = instanceGroup.TrainingPlanArn;
