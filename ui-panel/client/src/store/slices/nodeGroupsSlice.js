@@ -254,8 +254,14 @@ const nodeGroupsSlice = createSlice({
         state.hyperPodCreationStatus = 'creating';
         state.error = null;
       })
-      .addCase(createHyperPod.fulfilled, (state) => {
-        state.hyperPodCreationStatus = 'created';
+      .addCase(createHyperPod.fulfilled, (state, action) => {
+        // 使用 API 返回的数据构建状态对象，确保 UI 能正确显示
+        state.hyperPodCreationStatus = {
+          status: 'IN_PROGRESS',
+          phase: 'CREATING_STACK',
+          stackName: action.payload.stackName,
+          stackId: action.payload.stackId
+        };
       })
       .addCase(createHyperPod.rejected, (state, action) => {
         state.hyperPodCreationStatus = 'error';
