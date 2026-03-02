@@ -965,11 +965,29 @@ router.post('/hyperpod/node/reboot', async (req, res) => {
       });
     }
 
-    // 使用 kubectl 标签方式触发 reboot
-    const cmd = `kubectl label nodes ${nodeId} sagemaker.amazonaws.com/node-health-status=UnschedulablePendingReboot --overwrite`;
+    // 从节点名提取 instance ID (hyperpod-i-xxx -> i-xxx)
+    const instanceId = nodeId.replace(/^hyperpod-/, '');
+    const hpClusterName = clusterInfo.hyperPodCluster.ClusterName;
+    const region = clusterInfo.region;
+
+    // 使用 SageMaker API 触发 reboot
+    const cmd = `aws sagemaker batch-reboot-cluster-nodes --cluster-name ${hpClusterName} --node-ids ${instanceId} --region ${region}`;
 
     const result = execSync(cmd, { encoding: 'utf8' });
-    console.log('Reboot label result:', result);
+    console.log('Reboot API result:', result);
+
+    const apiResult = JSON.parse(result);
+    
+    // 检查是否有失败的节点
+    if (apiResult.Failed && apiResult.Failed.length > 0) {
+      const failedNode = apiResult.Failed[0];
+      return res.status(400).json({
+        success: false,
+        message: failedNode.Message || 'Reboot failed',
+        errorCode: failedNode.ErrorCode,
+        apiResponse: apiResult
+      });
+    }
 
     broadcast({
       type: 'hyperpod_node_reboot',
@@ -981,7 +999,8 @@ router.post('/hyperpod/node/reboot', async (req, res) => {
     res.json({
       success: true,
       message: 'Node reboot initiated successfully',
-      nodeId: nodeId
+      nodeId: nodeId,
+      apiResponse: apiResult
     });
   } catch (error) {
     console.error('HyperPod node reboot error:', error);
@@ -1025,11 +1044,29 @@ router.post('/hyperpod/node/replace', async (req, res) => {
       });
     }
 
-    // 使用 kubectl 标签方式触发 replace
-    const cmd = `kubectl label nodes ${nodeId} sagemaker.amazonaws.com/node-health-status=UnschedulablePendingReplacement --overwrite`;
+    // 从节点名提取 instance ID (hyperpod-i-xxx -> i-xxx)
+    const instanceId = nodeId.replace(/^hyperpod-/, '');
+    const hpClusterName = clusterInfo.hyperPodCluster.ClusterName;
+    const region = clusterInfo.region;
+
+    // 使用 SageMaker API 触发 replace
+    const cmd = `aws sagemaker batch-replace-cluster-nodes --cluster-name ${hpClusterName} --node-ids ${instanceId} --region ${region}`;
 
     const result = execSync(cmd, { encoding: 'utf8' });
-    console.log('Replace label result:', result);
+    console.log('Replace API result:', result);
+
+    const apiResult = JSON.parse(result);
+    
+    // 检查是否有失败的节点
+    if (apiResult.Failed && apiResult.Failed.length > 0) {
+      const failedNode = apiResult.Failed[0];
+      return res.status(400).json({
+        success: false,
+        message: failedNode.Message || 'Replace failed',
+        errorCode: failedNode.ErrorCode,
+        apiResponse: apiResult
+      });
+    }
 
     broadcast({
       type: 'hyperpod_node_replace',
@@ -1041,10 +1078,90 @@ router.post('/hyperpod/node/replace', async (req, res) => {
     res.json({
       success: true,
       message: 'Node replacement initiated successfully',
-      nodeId: nodeId
+      nodeId: nodeId,
+      apiResponse: apiResult
     });
   } catch (error) {
     console.error('HyperPod node replace error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
+ * 删除 HyperPod 节点
+ * POST /api/cluster/hyperpod/node/delete
+ */
+router.post('/hyperpod/node/delete', async (req, res) => {
+  try {
+    const { nodeId } = req.body;
+
+    if (!nodeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Node ID is required'
+      });
+    }
+
+    console.log(`Deleting HyperPod node: ${nodeId}`);
+
+    const activeCluster = clusterManager.getActiveCluster();
+    if (!activeCluster) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active cluster selected'
+      });
+    }
+
+    const clusterInfo = await clusterManager.getClusterInfo(activeCluster);
+    if (!clusterInfo || !clusterInfo.hyperPodCluster) {
+      return res.status(400).json({
+        success: false,
+        message: 'No HyperPod cluster found'
+      });
+    }
+
+    // 从节点名提取 instance ID (hyperpod-i-xxx -> i-xxx)
+    const instanceId = nodeId.replace(/^hyperpod-/, '');
+    const hpClusterName = clusterInfo.hyperPodCluster.ClusterName;
+    const region = clusterInfo.region;
+
+    // 使用 SageMaker API 删除节点
+    const cmd = `aws sagemaker batch-delete-cluster-nodes --cluster-name ${hpClusterName} --node-ids ${instanceId} --region ${region}`;
+
+    const result = execSync(cmd, { encoding: 'utf8' });
+    console.log('Delete API result:', result);
+
+    const apiResult = JSON.parse(result);
+    
+    // 检查是否有失败的节点
+    if (apiResult.Failed && apiResult.Failed.length > 0) {
+      const failedNode = apiResult.Failed[0];
+      return res.status(400).json({
+        success: false,
+        message: failedNode.Message || 'Delete failed',
+        errorCode: failedNode.ErrorCode,
+        apiResponse: apiResult
+      });
+    }
+
+    broadcast({
+      type: 'hyperpod_node_delete',
+      status: 'success',
+      nodeId: nodeId,
+      message: `Node ${nodeId} deletion initiated`
+    });
+
+    res.json({
+      success: true,
+      message: 'Node deletion initiated successfully',
+      nodeId: nodeId,
+      apiResponse: apiResult
+    });
+  } catch (error) {
+    console.error('HyperPod node delete error:', error);
     res.status(500).json({
       success: false,
       message: error.message

@@ -25,7 +25,7 @@ class ClusterStatusV2 {
    */
   executeKubectlWithTimeout(command, timeout = this.defaultTimeout) {
     return new Promise((resolve, reject) => {
-      const child = exec(`kubectl ${command}`, (error, stdout, stderr) => {
+      const child = exec(`kubectl ${command}`, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {
           console.error(`kubectl error: ${error.message}`);
           reject({ error: error.message, stderr, command });
@@ -47,14 +47,36 @@ class ClusterStatusV2 {
   }
 
   /**
-   * 计算 Pod 的 GPU 请求数
+   * 精简 Pod 数据，只保留计算 GPU 使用所需的字段
+   * 可将数据量从 ~1MB 减少到 ~12KB
    */
-  getPodGPURequest(pod) {
-    if (!pod.spec?.containers) return 0;
-    return pod.spec.containers.reduce((sum, container) => {
+  minimizePodData(pods) {
+    return pods.map(pod => ({
+      nodeName: pod.spec?.nodeName,
+      phase: pod.status?.phase,
+      nodeSelector: pod.spec?.nodeSelector,
+      gpuRequest: this.getPodGPURequestFromSpec(pod.spec)
+    }));
+  }
+
+  /**
+   * 从 pod.spec 计算 GPU 请求数
+   */
+  getPodGPURequestFromSpec(spec) {
+    if (!spec?.containers) return 0;
+    return spec.containers.reduce((sum, container) => {
       const gpuRequest = container.resources?.requests?.['nvidia.com/gpu'];
       return sum + (parseInt(gpuRequest) || 0);
     }, 0);
+  }
+
+  /**
+   * 计算 Pod 的 GPU 请求数（兼容精简后的数据）
+   */
+  getPodGPURequest(pod) {
+    // 支持精简后的数据格式
+    if (pod.gpuRequest !== undefined) return pod.gpuRequest;
+    return this.getPodGPURequestFromSpec(pod.spec);
   }
 
   /**
@@ -73,7 +95,7 @@ class ClusterStatusV2 {
       if (nodeName) {
         if (!podsByNode[nodeName]) podsByNode[nodeName] = [];
         podsByNode[nodeName].push(pod);
-      } else if (pod.status?.phase === 'Pending') {
+      } else if (pod.phase === 'Pending') {
         pendingPods.push(pod);
       }
     }
@@ -100,16 +122,16 @@ class ClusterStatusV2 {
       const totalGPU = parseInt(node.status?.capacity?.['nvidia.com/gpu']) || 0;
       const allocatableGPU = parseInt(node.status?.allocatable?.['nvidia.com/gpu']) || 0;
 
-      // 计算已使用 GPU（排除 Succeeded/Failed）
+      // 计算已使用 GPU（排除 Succeeded/Failed，使用精简后的 pod.phase）
       const nodePods = podsByNode[nodeName] || [];
       const usedGPU = nodePods
-        .filter(pod => !['Succeeded', 'Failed'].includes(pod.status?.phase))
+        .filter(pod => !['Succeeded', 'Failed'].includes(pod.phase))
         .reduce((sum, pod) => sum + this.getPodGPURequest(pod), 0);
 
-      // 计算 Pending GPU（nodeSelector 匹配当前节点的）
+      // 计算 Pending GPU（使用精简后的 pod.nodeSelector）
       const pendingGPU = pendingPods
         .filter(pod => {
-          const selector = pod.spec?.nodeSelector;
+          const selector = pod.nodeSelector;
           if (!selector) return true;
           return Object.entries(selector).every(([k, v]) => labels[k] === v);
         })
@@ -245,6 +267,9 @@ class ClusterStatusV2 {
       const nodesData = JSON.parse(nodesOutput);
       const podsData = JSON.parse(podsOutput);
       
+      // 立即精简 Pod 数据，释放内存（~1MB → ~12KB）
+      const minimizedPods = this.minimizePodData(podsData.items || []);
+      
       if (!nodesData.items || nodesData.items.length === 0) {
         console.log('No nodes found in cluster, returning empty result');
         return { nodes: [], fetchTime: Date.now() - startTime, timestamp: Date.now(), nodeCount: 0, version: 'v2-batch' };
@@ -256,7 +281,7 @@ class ClusterStatusV2 {
       // 在内存中计算所有节点的 GPU 信息（无额外 kubectl 调用）
       const gpuUsage = this.getAllNodesGPUInfoBatch(
         nodesData.items, 
-        podsData.items || [], 
+        minimizedPods, 
         hyperPodCapacityTypeMap
       );
       

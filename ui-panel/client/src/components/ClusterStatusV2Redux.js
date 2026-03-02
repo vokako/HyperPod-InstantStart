@@ -175,6 +175,36 @@ const ClusterStatusV2Redux = () => {
     }
   };
 
+  const handleNodeDelete = async () => {
+    if (!selectedNode) return;
+    
+    try {
+      setNodeActionLoading(true);
+      
+      const response = await fetch('/api/cluster/hyperpod/node/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeId: selectedNode.nodeName
+        })
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        message.success(`Node ${selectedNode.nodeName} deletion initiated`);
+        setNodeActionModalVisible(false);
+        setSelectedNode(null);
+      } else {
+        message.error(result.message || 'Failed to delete node');
+      }
+    } catch (error) {
+      console.error('Node delete error:', error);
+      message.error('Failed to delete node');
+    } finally {
+      setNodeActionLoading(false);
+    }
+  };
+
   const handleEnableNode = async () => {
     try {
       setApplyLoading(true);
@@ -737,18 +767,25 @@ const ClusterStatusV2Redux = () => {
               onClick={handleNodeReboot}
               loading={nodeActionLoading}
             >
-              Reboot Node
+              Reboot
             </Button>,
             <Button 
               key="replace" 
-              danger
               onClick={handleNodeReplace}
               loading={nodeActionLoading}
             >
-              Replace Node
+              Replace
+            </Button>,
+            <Button 
+              key="delete" 
+              danger
+              onClick={handleNodeDelete}
+              loading={nodeActionLoading}
+            >
+              Delete
             </Button>
           ]}
-          width={550}
+          width={600}
         >
           <div style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 8 }}>
@@ -763,10 +800,11 @@ const ClusterStatusV2Redux = () => {
             message="Node Operations"
             description={
               <div>
-                <p><strong>Reboot Node:</strong> Restart the node instance. The node will be temporarily unavailable during reboot.</p>
-                <p><strong>Replace Node:</strong> Terminate and replace the node with a new instance (If your cluster enabled spare nodes).</p>
+                <p><strong>Reboot:</strong> Soft restart the node. The node will be temporarily unavailable during reboot.</p>
+                <p><strong>Replace:</strong> Terminate and replace with a new instance. Requires spare capacity in the instance group.</p>
+                <p><strong>Delete:</strong> Permanently remove the node from the cluster. The node will NOT be replaced automatically.</p>
                 <p style={{ marginTop: 8, marginBottom: 0 }}>
-                  <Text type="warning">⚠️ Warning: These operations will affect running workloads on this node.</Text>
+                  <Text type="danger">⚠️ Warning: All operations will affect running workloads. Delete is irreversible - backup data to S3/FSx first!</Text>
                 </p>
               </div>
             }
